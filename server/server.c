@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,18 +28,18 @@ int main(int argc, const char *argv[]) {
     print_log(log, len);
     fd_set working_fd_set, temp_fd_set;
     fd_set_init(&temp_fd_set, server_fd);
-    int max_fd = server_fd;
+    int questions_fd = open("question_list.txt", O_CREAT | O_RDWR);
+    int max_fd = questions_fd;
     client_t *client_list = NULL;
-    FILE *question_list = fopen("question_list.txt", "w");
     echo_stdin("", 0);
     while (1) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&client_list, question_list, &max_fd, &working_fd_set,
-                    &temp_fd_set, server_fd);
+        monitor_fds(&client_list, &max_fd, &working_fd_set,
+                    &temp_fd_set, server_fd, questions_fd);
     }
     free_mem(client_list);
-    fclose(question_list);
+    close(questions_fd);
     close_endpoint(EXIT_SUCCESS);
 }
 
@@ -94,28 +95,28 @@ void listen_port(int server_fd) {
     }
 }
 
-void monitor_fds(client_t **client_list, FILE *question_list, int *max_fd,
-                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd) {
+void monitor_fds(client_t **client_list, int *max_fd, fd_set *working_fd_set,
+                 fd_set *temp_fd_set, int server_fd, int questions_fd) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(client_list, question_list, i, max_fd,
-                              temp_fd_set, server_fd);
+            process_ready_fds(client_list, i, max_fd, temp_fd_set,
+                              server_fd, questions_fd);
         }
     }
 }
 
-void process_ready_fds(client_t **client_list, FILE *question_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set, int server_fd) {
+void process_ready_fds(client_t **client_list, int fd, int *max_fd,
+                       fd_set *temp_fd_set, int server_fd, int questions_fd) {
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else if (fd == server_fd) {
         process_server_fd(client_list, max_fd, temp_fd_set, server_fd);
     } else {
-        process_client_fd(client_list, question_list, fd, temp_fd_set);
+        process_client_fd(client_list, fd, temp_fd_set, questions_fd);
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, *client_list, question_list);
+    process_stdin(term_buf, len, *client_list, questions_fd);
 }
 
 void process_server_fd(client_t **client_list, int *max_fd,
@@ -158,18 +159,18 @@ void add_new_client(client_t **client_list, int client_fd) {
     *client_list = new_client;
 }
 
-void process_client_fd(client_t **client_list, FILE *question_list,
-                       int fd, fd_set *temp_fd_set) {
+void process_client_fd(client_t **client_list, int fd,
+                       fd_set *temp_fd_set, int questions_fd) {
     char rbuf[MAX_SIZE_OF_BUF];
     int rlen = receive_buf(rbuf, fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        process_msg(client_list, question_list, rbuf, rlen, fd, temp_fd_set);
+        process_msg(client_list, rbuf, rlen, fd, temp_fd_set, questions_fd);
     }
 }
 
-void process_msg(client_t **client_list, FILE *question_list, const char *rbuf,
-                 int rlen, int client_fd, fd_set *temp_fd_set) {
+void process_msg(client_t **client_list, const char *rbuf, int rlen,
+                 int client_fd, fd_set *temp_fd_set, int questions_fd) {
     print_msg(rbuf, rlen, MESSAGE_IN);
     client_t *client = find_client_by_fd(*client_list, client_fd);
     if (rlen == 0) {
@@ -177,7 +178,7 @@ void process_msg(client_t **client_list, FILE *question_list, const char *rbuf,
     } else if (strncmp(rbuf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
         set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN, client);
     } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
-        ask_question(question_list, &rbuf[ASK_QN_CMD_LEN], client);
+        ask_question(&rbuf[ASK_QN_CMD_LEN], client, questions_fd);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen;
@@ -265,14 +266,16 @@ void assign_role(char role, client_t *client) {
     }
 }
 
-void ask_question(FILE *question_list, const char *rbuf, client_t *client) {
+void ask_question(const char *rbuf, client_t *client, int questions_fd) {
     static int question_num = 0;
-    fprintf(question_list, "/* Question #%d */\n", question_num);
-    fprintf(question_list, "*Question: %s\n", rbuf);
-    fprintf(question_list, "*Asked by: %d\n", client->fd);
-    fprintf(question_list, "*Answer: \n");
-    fprintf(question_list, "*Answered by: \n");
-    fprintf(question_list, "*Status: %d\n", PENDING);
+    char buf[MAX_SIZE_OF_BUF + MAX_SIZE_OF_LOG];
+    int size = sprintf(buf, "/* Question #%d */\n", question_num);
+    size += sprintf(&buf[size], "*Question: %s\n", rbuf);
+    size += sprintf(&buf[size], "*Asked by: %d\n", client->fd);
+    size += sprintf(&buf[size], "*Answer: \n");
+    size += sprintf(&buf[size], "*Answered by: \n");
+    size += sprintf(&buf[size], "*Status: %d\n", PENDING);
+    write(questions_fd, buf, size);
     ++question_num;
 }
 
@@ -287,10 +290,10 @@ void free_mem(client_t *list) {
 }
 
 void process_stdin(char *buf, int len, client_t *client_list,
-                   FILE *question_list) {
+                   int questions_fd) {
     if (strcmp(buf, "exit\n") == 0) {
         free_mem(client_list);
-        fclose(question_list);
+        close(questions_fd);
         close_endpoint(EXIT_SUCCESS);
     } else if (len > 0 && buf[len - 1] == '\n') {
         write(STDOUT_FILENO, "<< ", 3);
