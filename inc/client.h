@@ -13,6 +13,7 @@ void process_msg(const char *rbuf, int rlen,
 void remove_server(int server_fd, fd_set *temp_fd_set);
 void process_stdin(char *buf, int rlen, int fd);
 void print_man();
-int set_role(char *buf, int len);
+int set_role(const char *buf, int rlen);
+int ask_question(int rlen);
 
 #endif /* __CLIENT_H */

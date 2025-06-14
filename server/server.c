@@ -29,14 +29,16 @@ int main(int argc, const char *argv[]) {
     fd_set_init(&temp_fd_set, server_fd);
     int max_fd = server_fd;
     client_t *client_list = NULL;
+    FILE *question_list = fopen("question_list.txt", "w");
     echo_stdin("", 0);
     while (1) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&client_list, &max_fd, &working_fd_set,
+        monitor_fds(&client_list, question_list, &max_fd, &working_fd_set,
                     &temp_fd_set, server_fd);
     }
     free_mem(client_list);
+    fclose(question_list);
     close_endpoint(EXIT_SUCCESS);
 }
 
@@ -92,28 +94,28 @@ void listen_port(int server_fd) {
     }
 }
 
-void monitor_fds(client_t **client_list, int *max_fd,
+void monitor_fds(client_t **client_list, FILE *question_list, int *max_fd,
                  fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(client_list, i, max_fd,
+            process_ready_fds(client_list, question_list, i, max_fd,
                               temp_fd_set, server_fd);
         }
     }
 }
 
-void process_ready_fds(client_t **client_list, int fd,
+void process_ready_fds(client_t **client_list, FILE *question_list, int fd,
                        int *max_fd, fd_set *temp_fd_set, int server_fd) {
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else if (fd == server_fd) {
         process_server_fd(client_list, max_fd, temp_fd_set, server_fd);
     } else {
-        process_client_fd(client_list, fd, temp_fd_set);
+        process_client_fd(client_list, question_list, fd, temp_fd_set);
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, *client_list);
+    process_stdin(term_buf, len, *client_list, question_list);
 }
 
 void process_server_fd(client_t **client_list, int *max_fd,
@@ -156,22 +158,26 @@ void add_new_client(client_t **client_list, int client_fd) {
     *client_list = new_client;
 }
 
-void process_client_fd(client_t **client_list, int fd, fd_set *temp_fd_set) {
+void process_client_fd(client_t **client_list, FILE *question_list,
+                       int fd, fd_set *temp_fd_set) {
     char rbuf[MAX_SIZE_OF_BUF];
     int rlen = receive_buf(rbuf, fd);
     if (rlen >= 0) {
-        process_msg(client_list, rbuf, rlen, fd, temp_fd_set);
+        rbuf[rlen] = '\0';
+        process_msg(client_list, question_list, rbuf, rlen, fd, temp_fd_set);
     }
 }
 
-void process_msg(client_t **client_list, const char *rbuf, int rlen,
-                 int client_fd, fd_set *temp_fd_set) {
+void process_msg(client_t **client_list, FILE *question_list, const char *rbuf,
+                 int rlen, int client_fd, fd_set *temp_fd_set) {
     print_msg(rbuf, rlen, MESSAGE_IN);
     client_t *client = find_client_by_fd(*client_list, client_fd);
     if (rlen == 0) {
         remove_client(client_list, client_fd, temp_fd_set);
     } else if (strncmp(rbuf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
         set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN, client);
+    } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
+        ask_question(question_list, &rbuf[ASK_QN_CMD_LEN], client);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen;
@@ -259,6 +265,17 @@ void assign_role(char role, client_t *client) {
     }
 }
 
+void ask_question(FILE *question_list, const char *rbuf, client_t *client) {
+    static int question_num = 0;
+    fprintf(question_list, "/* Question #%d */\n", question_num);
+    fprintf(question_list, "*Question: %s\n", rbuf);
+    fprintf(question_list, "*Asked by: %d\n", client->fd);
+    fprintf(question_list, "*Answer: \n");
+    fprintf(question_list, "*Answered by: \n");
+    fprintf(question_list, "*Status: %d\n", PENDING);
+    ++question_num;
+}
+
 void free_mem(client_t *list) {
     client_t *node = list;
     client_t *next = NULL;
@@ -269,9 +286,11 @@ void free_mem(client_t *list) {
     }
 }
 
-void process_stdin(char *buf, int len, client_t *client_list) {
+void process_stdin(char *buf, int len, client_t *client_list,
+                   FILE *question_list) {
     if (strcmp(buf, "exit\n") == 0) {
         free_mem(client_list);
+        fclose(question_list);
         close_endpoint(EXIT_SUCCESS);
     } else if (len > 0 && buf[len - 1] == '\n') {
         write(STDOUT_FILENO, "<< ", 3);

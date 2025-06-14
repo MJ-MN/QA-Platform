@@ -4,6 +4,7 @@
 #include <sys/select.h>
 
 #define MAX_SIZE_OF_BUF 1024
+#define MIN_SIZE_OF_QA 8
 
 #define RET_OK 1
 #define RET_ERR 0

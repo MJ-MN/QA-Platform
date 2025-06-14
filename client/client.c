@@ -114,6 +114,8 @@ void process_stdin(char *buf, int rlen, int fd) {
             print_man();
         } else if (strncmp(buf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
             need_send = set_role(&buf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN);
+        } else if (strncmp(buf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
+            need_send = ask_question(rlen - ASK_QN_CMD_LEN);
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;
@@ -151,7 +153,7 @@ void print_man() {
     print_log(log, len);
 }
 
-int set_role(char *buf, int rlen) {
+int set_role(const char *buf, int rlen) {
     int ret_val = RET_ERR;
     char role = buf[0];
     if ((role == ROLE_STUDENT || role == ROLE_TA) && rlen == 2) {
@@ -160,6 +162,19 @@ int set_role(char *buf, int rlen) {
         char log[MAX_SIZE_OF_LOG];
         int len;
         len = sprintf(log, "Invalid role!\n");
+        print_error(log, len);
+    }
+    return ret_val;
+}
+
+int ask_question(int rlen) {
+    int ret_val = RET_ERR;
+    if (rlen > MIN_SIZE_OF_QA) {
+        ret_val = RET_OK;
+    } else {
+        char log[MAX_SIZE_OF_LOG];
+        int len;
+        len = sprintf(log, "Too short question!\n");
         print_error(log, len);
     }
     return ret_val;
