@@ -113,7 +113,8 @@ void process_stdin(char *buf, int rlen, int fd) {
         } else if (strcmp(buf, "help\n") == 0) {
             print_man();
         } else if (strncmp(buf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
-            need_send = set_role(&buf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN);
+            need_send = set_role(&buf[SET_ROLE_CMD_LEN],
+                                 rlen - SET_ROLE_CMD_LEN);
         } else if (strncmp(buf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
             need_send = ask_question(rlen - ASK_QN_CMD_LEN);
         } else {
