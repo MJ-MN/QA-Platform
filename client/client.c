@@ -117,6 +117,8 @@ void process_stdin(char *buf, int rlen, int fd) {
                                  rlen - SET_ROLE_CMD_LEN);
         } else if (strncmp(buf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
             need_send = ask_question(rlen - ASK_QN_CMD_LEN);
+        } else if (strncmp(buf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
+            need_send = 1;
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;

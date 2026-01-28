@@ -179,6 +179,8 @@ void process_msg(client_t **c_list, question_t **q_list, const char *rbuf, int r
     } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
         ask_question(&rbuf[ASK_QN_CMD_LEN], rlen - ASK_QN_CMD_LEN, client,
                      q_list);
+    } else if (strncmp(rbuf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
+        get_questions_list(client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen;
@@ -286,6 +288,23 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
     question->answered_by = -1;
     question->next = *q_list;
     *q_list = question;
+}
+
+void get_questions_list(client_t *client, question_t *q_list) {
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen = sprintf(tbuf, "List of questions:\n");
+    while (q_list != NULL) {
+        if (tlen + strlen(q_list->q_str) < MAX_SIZE_OF_BUF) {
+            tlen += sprintf(&tbuf[tlen], "Q%d: %s\n", q_list->question_num,
+                            q_list->q_str);
+            q_list = q_list->next;
+        } else {
+            send_buf(tbuf, tlen - 1, client->fd);
+            memset(tbuf, 0, MAX_SIZE_OF_BUF);
+            tlen = 0;
+        }
+    }
+    send_buf(tbuf, tlen - 1, client->fd);
 }
 
 void free_mem(client_t *c_list, question_t *q_list) {

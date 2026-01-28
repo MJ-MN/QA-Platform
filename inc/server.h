@@ -57,6 +57,7 @@ void ask_question(const char *rbuf, int rlen, client_t *client,
                   question_t **q_list);
 void add_new_question(const char *rbuf, int rlen, client_t *client,
                       question_t **q_list);
+void get_questions_list(client_t *client, question_t *q_list);
 void free_mem(client_t *c_list, question_t *q_list);
 void process_stdin(char *buf, int len, client_t *c_list,
                    question_t *q_list);
