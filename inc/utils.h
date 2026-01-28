@@ -15,12 +15,12 @@
 #define SET_ROLE_CMD_LEN 9
 #define ASK_QN_CMD "ask_question "
 #define ASK_QN_CMD_LEN 13
-#define GET_QN_LS_CMD "get_questions_list "
-#define GET_QN_LS_CMD_LEN 19
+#define GET_QN_LS_CMD "get_questions_list"
+#define GET_QN_LS_CMD_LEN 18
 #define SET_QN_STS_CMD "set_question_status "
 #define SET_QN_STS_CMD_LEN 20
-#define GET_SESH_LS_CMD "get_sessions_list "
-#define GET_SESH_LS_CMD_LEN 18
+#define GET_SESH_LS_CMD "get_sessions_list"
+#define GET_SESH_LS_CMD_LEN 17
 #define ATT_SESH_CMD "attend_session "
 #define ATT_SESH_CMD_LEN 15
 
