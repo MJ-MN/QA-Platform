@@ -17,7 +17,7 @@ int main(int argc, const char *argv[]) {
     int len;
     disable_echo();
     if (argc < 2) {
-        len = sprintf(log, "Invalid port!\n");
+        len = sprintf(log, "Usage: ./bin/client.out <port>\n");
         print_error(log, len); 
         close_endpoint(EXIT_FAILURE);
     }

@@ -18,7 +18,7 @@ int main(int argc, const char *argv[]) {
     int len;
     disable_echo();
     if (argc < 2) {
-        len = sprintf(log, "Invalid port!\n");
+        len = sprintf(log, "Usage: ./bin/server.out <port>\n");
         print_error(log, len); 
         close_endpoint(EXIT_FAILURE);
     }
@@ -168,8 +168,8 @@ void process_client_fd(client_t **c_list, question_t **q_list, int fd,
     }
 }
 
-void process_msg(client_t **c_list, question_t **q_list, const char *rbuf, int rlen,
-                 int client_fd, fd_set *temp_fd_set) {
+void process_msg(client_t **c_list, question_t **q_list, const char *rbuf,
+                 int rlen, int client_fd, fd_set *temp_fd_set) {
     print_msg(rbuf, rlen, MESSAGE_IN);
     client_t *client = find_client_by_fd(*c_list, client_fd);
     if (rlen == 0) {
@@ -269,9 +269,16 @@ void assign_role(char role, client_t *client) {
 
 void ask_question(const char *rbuf, int rlen, client_t *client,
                   question_t **q_list) {
-    add_new_question(rbuf, rlen, client, q_list);
     char tbuf[MAX_SIZE_OF_BUF];
-    int tlen = sprintf(tbuf, "Question registered!");
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_TA) {
+        tlen = sprintf(tbuf, "This command is for students!");
+    } else {
+        add_new_question(rbuf, rlen, client, q_list);
+        tlen = sprintf(tbuf, "Question registered!");
+    }
     send_buf(tbuf, tlen, client->fd);
     print_msg(tbuf, tlen, MESSAGE_OUT);
 }
@@ -292,19 +299,37 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
 
 void get_questions_list(client_t *client, question_t *q_list) {
     char tbuf[MAX_SIZE_OF_BUF];
-    int tlen = sprintf(tbuf, "List of questions:\n");
-    while (q_list != NULL) {
-        if (tlen + strlen(q_list->q_str) < MAX_SIZE_OF_BUF) {
-            tlen += sprintf(&tbuf[tlen], "Q%d: %s\n", q_list->question_num,
-                            q_list->q_str);
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_STUDENT) {
+        tlen = sprintf(tbuf, "This command is for TAs!");
+    } else {
+        tlen = sprintf(tbuf, "List of questions:\n");
+        while (q_list != NULL) {
+            send_question(client, q_list, tbuf, &tlen);
             q_list = q_list->next;
+        }
+        --tlen;
+    }
+    send_buf(tbuf, tlen, client->fd);
+    print_msg(tbuf, tlen, MESSAGE_OUT);
+}
+
+void send_question(client_t *client, question_t *q_list,
+                   char *tbuf, int *tlen) {
+    if (q_list->status == PENDING) {
+        if(*tlen + strlen(q_list->q_str) < MAX_SIZE_OF_BUF) {
+            *tlen += sprintf(&tbuf[*tlen], "Q%d: %s\n", q_list->question_num,
+                             q_list->q_str);
         } else {
-            send_buf(tbuf, tlen - 1, client->fd);
-            memset(tbuf, 0, MAX_SIZE_OF_BUF);
-            tlen = 0;
+            --*tlen;
+            send_buf(tbuf, *tlen, client->fd);
+            print_msg(tbuf, *tlen, MESSAGE_OUT);
+            *tlen = sprintf(tbuf, "Q%d: %s\n", q_list->question_num,
+                           q_list->q_str);
         }
     }
-    send_buf(tbuf, tlen - 1, client->fd);
 }
 
 void free_mem(client_t *c_list, question_t *q_list) {
