@@ -33,21 +33,27 @@ typedef struct question_t {
 } question_t;
 
 int setup_server(int port);
-int create_socket();
-void bind_port(int server_fd, int port);
+int create_tcp_socket();
+void bind_tcp_port(int server_fd, int port);
 void listen_port(int server_fd);
-void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd,
-                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd);
-void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set, int server_fd);
+void monitor_fds(client_t **c_list, question_t **q_list, udp_t **udp_list,
+                 int *max_fd, fd_set *working_fd_set, fd_set *temp_fd_set,
+                 int server_fd);
+void process_ready_fds(client_t **c_list, question_t **q_list,
+                       udp_t **udp_list, int fd, int *max_fd,
+                       fd_set *temp_fd_set, int server_fd);
+udp_t *find_udp_sock_by_fd(udp_t *udp_list, int fd);
 void process_server_fd(client_t **c_list, int *max_fd,
                        fd_set *temp_fd_set, int client_fd);
 int accept_client(client_t **c_list, int server_fd);
 void add_new_client(client_t **c_list, int client_fd);
-void process_client_fd(client_t **c_list, question_t **q_list, int fd,
+void process_broadcast_msg(udp_t *udp_sock);
+void process_client_fd(client_t **c_list, question_t **q_list,
+                       udp_t **udp_list, int fd, int *max_fd,
                        fd_set *temp_fd_set);
-void process_msg(client_t **c_list, question_t **q_list, const char *rbuf,
-                 int rlen, int client_fd, fd_set *temp_fd_set);
+void process_msg(client_t **c_list, question_t **q_list, udp_t **udp_list,
+                 const char *rbuf, int rlen, int client_fd, int *max_fd,
+                 fd_set *temp_fd_set);
 client_t *find_client_by_fd(client_t *c_list, int client_fd);
 void remove_client(client_t **c_list, int fd, fd_set *temp_fd_set);
 void remove_node(client_t **list, int fd);
@@ -60,10 +66,17 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
 void get_questions_list(client_t *client, question_t *q_list);
 void send_question(client_t *client, question_t *q_list,
                    char *tbuf, int *tlen);
-void select_question(const char *rbuf, client_t *client, question_t *q_list);
-int process_select_question(question_t *q_list, char *tbuf, int q_num);
+void select_question(const char *rbuf, client_t *client, question_t *q_list,
+                     udp_t **udp_list, int *max_fd, fd_set *temp_fd_set);
+int process_select_question(question_t *q_list, udp_t **udp_list, char *tbuf,
+                            int q_num, int *max_fd, fd_set *temp_fd_set);
 question_t *find_question_by_number(question_t *q_list, int question_num);
-void free_mem(client_t *c_list, question_t *q_list);
-void process_stdin(char *buf, int len, client_t *c_list,
-                   question_t *q_list, int fd);
+int process_connection(udp_t **udp_list, char *tbuf, int *max_fd,
+                       fd_set *temp_fd_set);
+udp_t *setup_udp_connection(int port);
+int create_udp_socket();
+int bind_udp_port(int fd, int port);
+void free_mem(client_t **c_list, question_t **q_list);
+void process_stdin(char *buf, int len, int fd, client_t **c_list,
+                   question_t **q_list, udp_t **udp_list, fd_set *temp_fd_set);
 #endif /* __SERVER_H */

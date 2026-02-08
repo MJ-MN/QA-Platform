@@ -1,8 +1,6 @@
 #ifndef __UTILS_H
 #define __UTILS_H
 
-#include <sys/select.h>
-
 #define MAX_SIZE_OF_BUF 1024
 #define MIN_SIZE_OF_QA 8
 
@@ -28,6 +26,13 @@
 #define ATT_SESH_CMD "attend_session "
 #define ATT_SESH_CMD_LEN 15
 
+#define CONN_STAB "Connection was stablished on port "
+#define CONN_STAB_LEN 34
+#define CONN_CLOSE "Close connection!"
+#define CONN_CLOSE_LEN 17
+#define UDP_MODE "udp_mode: "
+#define UDP_MODE_LEN 10
+
 #define ROLE_NONE '0'
 #define ROLE_STUDENT 'S'
 #define ROLE_TA 'T'
@@ -44,14 +49,23 @@ extern const char *ROLE_STR[];
 #define ANSI_COLOR_WHT "\e[37m"
 #define ANSI_CODE_LEN 5
 
+typedef struct udp_t {
+    struct sockaddr_in sock_addr;
+    struct udp_t *next;
+    int fd;
+} udp_t;
+
 void enable_echo();
 void disable_echo();
 void fd_set_init(fd_set *temp_fd_set, int self_fd);
 void process_stdin_fd(char *buf);
 int receive_buf(char *rbuf, int fd);
+int receive_udp_buf(char *rbuf, int fd);
 int send_buf(const char *buf, int slen, int fd);
+int send_udp_buf(const char *buf, int slen, udp_t *udp_sock);
 void echo_stdin(const char *buf, int len);
 void clear_line();
 void close_endpoint(int status);
+void free_list_udp(udp_t **head, fd_set *temp_fd_set);
 
 #endif /* __UTILS_H */

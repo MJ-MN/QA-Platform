@@ -8,8 +8,8 @@
 #include <unistd.h>
 
 #include "log.h"
-#include "server.h"
 #include "utils.h"
+#include "server.h"
 
 static char term_buf[MAX_SIZE_OF_BUF] = {0};
 
@@ -31,21 +31,23 @@ int main(int argc, const char *argv[]) {
     int max_fd = server_fd;
     client_t *client_list = NULL;
     question_t *question_list = NULL;
+    udp_t *udp_list = NULL;
     echo_stdin("", 0);
     while (1) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&client_list, &question_list, &max_fd, &working_fd_set,
-                    &temp_fd_set, server_fd);
+        monitor_fds(&client_list, &question_list, &udp_list, &max_fd,
+                    &working_fd_set, &temp_fd_set, server_fd);
     }
-    free_mem(client_list, question_list);
+    free_list_udp(&udp_list, &temp_fd_set);
+    free_mem(&client_list, &question_list);
     close(server_fd);
     close_endpoint(EXIT_SUCCESS);
 }
 
 int setup_server(int port) {
-    int server_fd = create_socket();
-    bind_port(server_fd, port);
+    int server_fd = create_tcp_socket();
+    bind_tcp_port(server_fd, port);
     listen_port(server_fd);
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Server created successfully!\n");
@@ -53,9 +55,9 @@ int setup_server(int port) {
     return server_fd;
 }
 
-int create_socket() {
+int create_tcp_socket() {
     char log[MAX_SIZE_OF_LOG];
-    int len = sprintf(log, "Creating socket...\n");
+    int len = sprintf(log, "Creating TCP socket...\n");
     print_log(log, len);
     int server_fd = socket(AF_INET, SOCK_STREAM, PF_UNSPEC);
     if (server_fd < 0) {
@@ -63,21 +65,21 @@ int create_socket() {
         print_error(log, len);
         close_endpoint(EXIT_FAILURE);
     }
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    int enable = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
     return server_fd;
 }
 
-void bind_port(int server_fd, int port) {
+void bind_tcp_port(int server_fd, int port) {
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Binding to port %d...\n", port);
     print_log(log, len);
-    struct sockaddr_in socket_addr;
+    struct sockaddr_in socket_addr = {0};
     socket_addr.sin_family = AF_INET;
     socket_addr.sin_addr.s_addr = INADDR_ANY;
     socket_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr *)&socket_addr,
-             sizeof(socket_addr)) < 0) {
+             sizeof(struct sockaddr)) < 0) {
         len = sprintf(log, "Port binding failed!\n");
         print_error(log, len);
         close(server_fd);
@@ -97,28 +99,44 @@ void listen_port(int server_fd) {
     }
 }
 
-void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd,
-                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd) {
+void monitor_fds(client_t **c_list, question_t **q_list, udp_t **udp_list,
+                 int *max_fd, fd_set *working_fd_set, fd_set *temp_fd_set,
+                 int server_fd) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(c_list, q_list, i, max_fd, temp_fd_set,
-                              server_fd);
+            process_ready_fds(c_list, q_list, udp_list, i, max_fd,
+                              temp_fd_set, server_fd);
         }
     }
 }
 
-void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set, int server_fd) {
+void process_ready_fds(client_t **c_list, question_t **q_list,
+                       udp_t **udp_list, int fd, int *max_fd,
+                       fd_set *temp_fd_set, int server_fd) {
+    udp_t *udp_socket = find_udp_sock_by_fd(*udp_list, fd);
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else if (fd == server_fd) {
         process_server_fd(c_list, max_fd, temp_fd_set, server_fd);
+    } else if (udp_socket != NULL) {
+        process_broadcast_msg(udp_socket);
     } else {
-        process_client_fd(c_list, q_list, fd, temp_fd_set);
+        process_client_fd(c_list, q_list, udp_list, fd, max_fd, temp_fd_set);
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, *c_list, *q_list, server_fd);
+    process_stdin(term_buf, len, server_fd, c_list, q_list, udp_list,
+                  temp_fd_set);
+}
+
+udp_t *find_udp_sock_by_fd(udp_t *udp_list, int fd) {
+    while (udp_list != NULL) {
+        if (udp_list->fd == fd) {
+            return udp_list;
+        }
+        udp_list = udp_list->next;
+    }
+    return NULL;
 }
 
 void process_server_fd(client_t **c_list, int *max_fd,
@@ -131,14 +149,13 @@ void process_server_fd(client_t **c_list, int *max_fd,
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen = sprintf(tbuf, "Which one are you? (S)tudent/(T)A");
     send_buf(tbuf, tlen, new_client_fd);
-    print_msg(tbuf, tlen, MESSAGE_OUT);
 }
 
 int accept_client(client_t **c_list, int server_fd) {
     char log[MAX_SIZE_OF_LOG];
     int len;
     struct sockaddr_in socket_addr;
-    socklen_t socket_len = sizeof(socket_addr);
+    socklen_t socket_len = sizeof(struct sockaddr);
     int client_fd = accept(server_fd, (struct sockaddr *)&socket_addr,
                            &socket_len);
     if (client_fd < 0) {
@@ -160,19 +177,32 @@ void add_new_client(client_t **c_list, int client_fd) {
     *c_list = new_client;
 }
 
-void process_client_fd(client_t **c_list, question_t **q_list, int fd,
+void process_broadcast_msg(udp_t *udp_sock) {
+    char rbuf[MAX_SIZE_OF_BUF];
+    int rlen = receive_udp_buf(rbuf, udp_sock->fd);
+    if (rlen >= 0) {
+        rbuf[rlen] = '\0';
+        print_msg(rbuf, rlen, MESSAGE_IN);
+        send_udp_buf(rbuf, rlen, udp_sock);
+    }
+}
+
+void process_client_fd(client_t **c_list, question_t **q_list,
+                       udp_t **udp_list, int fd, int *max_fd,
                        fd_set *temp_fd_set) {
     char rbuf[MAX_SIZE_OF_BUF];
     int rlen = receive_buf(rbuf, fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        process_msg(c_list, q_list, rbuf, rlen, fd, temp_fd_set);
+        print_msg(rbuf, rlen, MESSAGE_IN);
+        process_msg(c_list, q_list, udp_list, rbuf, rlen,
+                    fd, max_fd, temp_fd_set);
     }
 }
 
-void process_msg(client_t **c_list, question_t **q_list, const char *rbuf,
-                 int rlen, int client_fd, fd_set *temp_fd_set) {
-    print_msg(rbuf, rlen, MESSAGE_IN);
+void process_msg(client_t **c_list, question_t **q_list, udp_t **udp_list,
+                 const char *rbuf, int rlen, int client_fd, int *max_fd,
+                 fd_set *temp_fd_set) {
     client_t *client = find_client_by_fd(*c_list, client_fd);
     if (rlen == 0) {
         remove_client(c_list, client_fd, temp_fd_set);
@@ -180,26 +210,27 @@ void process_msg(client_t **c_list, question_t **q_list, const char *rbuf,
         set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN, client);
     } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
         ask_question(&rbuf[ASK_QN_CMD_LEN], rlen - ASK_QN_CMD_LEN, client,
-                     q_list);
+                        q_list);
     } else if (strncmp(rbuf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
         get_questions_list(client, *q_list);
     } else if (strncmp(rbuf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
-        select_question(&rbuf[SELECT_QN_CMD_LEN], client, *q_list);
+        select_question(&rbuf[SELECT_QN_CMD_LEN], client, *q_list, udp_list,
+                        max_fd, temp_fd_set);
+    } else if (strncmp(rbuf, CONN_CLOSE, CONN_CLOSE_LEN) == 0) {
+
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
         send_buf(tbuf, tlen, client->fd);
-        print_msg(tbuf, tlen, MESSAGE_OUT);
     }
 }
 
 client_t *find_client_by_fd(client_t *c_list, int client_fd) {
-    client_t *node = c_list;
-    while (node != NULL) {
-        if (node->fd == client_fd) {
-            return node;
+    while (c_list != NULL) {
+        if (c_list->fd == client_fd) {
+            return c_list;
         }
-        node = node->next;
+        c_list = c_list->next;
     }
     return NULL;
 }
@@ -242,7 +273,6 @@ void set_role(const char *rbuf, int rlen, client_t *client) {
         int tlen = sprintf(tbuf, "Invalid role! ");
         tlen += sprintf(&tbuf[tlen], "Which one are you? (S)tudent/(T)A");
         send_buf(tbuf, tlen, client->fd);
-        print_msg(tbuf, tlen, MESSAGE_OUT);     
     }
 }
 
@@ -254,7 +284,6 @@ void assign_role(char role, client_t *client) {
         tlen = sprintf(tbuf, "Are you sure to change the role?\n");
         tlen += sprintf(&tbuf[tlen], "Enter again to confirm.");
         send_buf(tbuf, tlen, client->fd);
-        print_msg(tbuf, tlen, MESSAGE_OUT);
     } else {
         CLR_FIRST_ROLE_TRY(client->retries);
         client->role = role;
@@ -265,7 +294,6 @@ void assign_role(char role, client_t *client) {
         tlen = sprintf(tbuf, "Role assigned to %s!",
                        ROLE_STR[(role == ROLE_TA) ? 1 : 0]);
         send_buf(tbuf, tlen, client->fd);
-        print_msg(tbuf, tlen, MESSAGE_OUT);
     }
 }
 
@@ -282,7 +310,6 @@ void ask_question(const char *rbuf, int rlen, client_t *client,
         tlen = sprintf(tbuf, "Question registered!");
     }
     send_buf(tbuf, tlen, client->fd);
-    print_msg(tbuf, tlen, MESSAGE_OUT);
 }
 
 void add_new_question(const char *rbuf, int rlen, client_t *client,
@@ -315,7 +342,6 @@ void get_questions_list(client_t *client, question_t *q_list) {
         --tlen;
     }
     send_buf(tbuf, tlen, client->fd);
-    print_msg(tbuf, tlen, MESSAGE_OUT);
 }
 
 void send_question(client_t *client, question_t *q_list,
@@ -327,14 +353,14 @@ void send_question(client_t *client, question_t *q_list,
         } else {
             --*tlen;
             send_buf(tbuf, *tlen, client->fd);
-            print_msg(tbuf, *tlen, MESSAGE_OUT);
             *tlen = sprintf(tbuf, "Q%d: %s\n", q_list->question_num,
                             q_list->q_str);
         }
     }
 }
 
-void select_question(const char *rbuf, client_t *client, question_t *q_list) {
+void select_question(const char *rbuf, client_t *client, question_t *q_list,
+                     udp_t **udp_list, int *max_fd, fd_set *temp_fd_set) {
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen;
     if (client->role == ROLE_NONE) {
@@ -342,16 +368,18 @@ void select_question(const char *rbuf, client_t *client, question_t *q_list) {
     } else if (client->role == ROLE_STUDENT) {
         tlen = sprintf(tbuf, "This command is for TAs!");
     } else {
-        tlen = process_select_question(q_list, tbuf, atoi(rbuf));
+        tlen = process_select_question(q_list, udp_list, tbuf, atoi(rbuf),
+                                       max_fd, temp_fd_set);
     }
     send_buf(tbuf, tlen, client->fd);
 }
 
-int process_select_question(question_t *q_list, char *tbuf, int q_num) {
+int process_select_question(question_t *q_list, udp_t **udp_list, char *tbuf,
+                            int q_num, int *max_fd, fd_set *temp_fd_set) {
     int tlen;
     question_t *question = find_question_by_number(q_list, q_num);
     if (question != NULL) {
-
+        tlen = process_connection(udp_list, tbuf, max_fd, temp_fd_set);
     } else {
         tlen = sprintf(tbuf, "Question not found!");
     }
@@ -368,24 +396,104 @@ question_t *find_question_by_number(question_t *q_list, int question_num) {
     return NULL;
 }
 
-void free_mem(client_t *c_list, question_t *q_list) {
-    client_t *c_next = NULL;
-    while (c_list != NULL) {
-        c_next = c_list->next;
-        free(c_list);
-        c_list = c_next;
+int process_connection(udp_t **udp_list, char *tbuf, int *max_fd,
+                       fd_set *temp_fd_set) {
+    static int udp_port = 50000;
+    int tlen;
+    udp_t *udp_socket = setup_udp_connection(udp_port);
+    if (udp_socket != NULL) {
+        udp_socket->next = *udp_list;
+        *udp_list = udp_socket;
+        FD_SET(udp_socket->fd, temp_fd_set);
+        if (udp_socket->fd > *max_fd) {
+            *max_fd = udp_socket->fd;
+        }
+        tlen = sprintf(tbuf, "%s%d!", CONN_STAB, udp_port);
+        udp_port += 2;
+    } else {
+        tlen = sprintf(tbuf, "Connection cannot be stablished!");
     }
-    question_t *q_next = NULL;
-    while (q_list != NULL) {
-        q_next = q_list->next;
-        free(q_list);
-        q_list = q_next;
-    }
+    return tlen;
 }
 
-void process_stdin(char *buf, int len, client_t *c_list,
-                   question_t *q_list, int fd) {
+udp_t *setup_udp_connection(int port) {
+    int udp_fd = create_udp_socket();
+    if (udp_fd < 0) {
+        return NULL;
+    }
+    if (bind_udp_port(udp_fd, port) != RET_OK) {
+        close(udp_fd);
+        return NULL;
+    }
+    udp_t *udp_socket = malloc(sizeof(udp_t));
+    memset(udp_socket, 0, sizeof(udp_t));
+    udp_socket->sock_addr.sin_family = AF_INET;
+    udp_socket->sock_addr.sin_port = htons(port + 1);
+    udp_socket->sock_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    udp_socket->fd = udp_fd;
+    return udp_socket;
+}
+
+int create_udp_socket() {
+    char log[MAX_SIZE_OF_LOG];
+    int len = sprintf(log, "Creating UDP socket...\n");
+    print_log(log, len);
+    int udp_fd = socket(AF_INET, SOCK_DGRAM, PF_UNSPEC);
+    if (udp_fd < 0) {
+        len = sprintf(log, "Socket creation failed!\n");
+        print_error(log, len);
+        return -1;
+    }
+    const int enable = 1;
+    setsockopt(udp_fd, SOL_SOCKET, SO_BROADCAST, &enable, sizeof(int));
+    setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+    return udp_fd;
+}
+
+int bind_udp_port(int fd, int port) {
+    char log[MAX_SIZE_OF_LOG];
+    int len = sprintf(log, "Binding to port %d...\n", port);
+    print_log(log, len);
+    struct sockaddr_in socket_addr = {0};
+    socket_addr.sin_family = AF_INET;
+    socket_addr.sin_port = htons(port);
+    socket_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (struct sockaddr *)&socket_addr,
+             sizeof(struct sockaddr_in)) < 0) {
+        len = sprintf(log, "Port binding failed!\n");
+        print_error(log, len);
+        return RET_ERR;
+    }
+    return RET_OK;
+}
+
+void free_mem(client_t **c_list, question_t **q_list) { 
+    client_t *c_next = NULL;
+    while (*c_list != NULL) {
+        c_next = (*c_list)->next;
+        free(*c_list);
+        *c_list = c_next;
+    }
+    *c_list = NULL;
+    question_t *q_next = NULL;
+    while (*q_list != NULL) {
+        q_next = (*q_list)->next;
+        if ((*q_list)->a_str != NULL) {
+            free((*q_list)->a_str);
+        }
+        if ((*q_list)->q_str != NULL) {
+            free((*q_list)->q_str);
+        }
+        free(*q_list);
+        *q_list = q_next;
+    }
+    *q_list = NULL;
+}
+
+void process_stdin(char *buf, int len, int fd, client_t **c_list,
+                   question_t **q_list, udp_t **udp_list, fd_set *temp_fd_set) {
     if (strcmp(buf, "exit\n") == 0) {
+        free_list_udp(udp_list, temp_fd_set);
         free_mem(c_list, q_list);
         close(fd);
         close_endpoint(EXIT_SUCCESS);

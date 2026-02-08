@@ -1,8 +1,9 @@
-#include <sys/socket.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/socket.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -72,6 +73,23 @@ int receive_buf(char *rbuf, int fd) {
     }
     len = sprintf(log, "%d byte(s) was received from fd: %d!\n", rlen, fd);
     print_log(log, len);
+    print_msg(rbuf, rlen, MESSAGE_IN);
+    return rlen;
+}
+
+int receive_udp_buf(char *rbuf, int fd) {
+    char log[MAX_SIZE_OF_LOG];
+    int len;
+    int rlen = recvfrom(fd, rbuf, MAX_SIZE_OF_BUF, 0, NULL, NULL);
+    if (rlen < 0) {
+        len = sprintf(log, "Receiving UDP message failed!\n");
+        print_error(log, len);
+        return rlen;
+    }
+    len = sprintf(log, "%d byte(s) was received from fd: %d over UDP!\n",
+                  rlen, fd);
+    print_log(log, len);
+    print_msg(rbuf, rlen, MESSAGE_IN);
     return rlen;
 }
 
@@ -86,6 +104,25 @@ int send_buf(const char *buf, int slen, int fd) {
     }
     len = sprintf(log, "%d byte(s) was sent to fd: %d!\n", tlen, fd);
     print_log(log, len);
+    print_msg(buf, tlen, MESSAGE_OUT);
+    return tlen;
+}
+
+int send_udp_buf(const char *buf, int slen, udp_t *udp_sock) {
+    int tlen = sendto(udp_sock->fd, buf, slen, 0,
+                      (struct sockaddr *)&udp_sock->sock_addr,
+                      sizeof(struct sockaddr));
+    char log[MAX_SIZE_OF_LOG];
+    int len;
+    if (tlen < 0) {
+        len = sprintf(log, "Sending UDP message failed!\n");
+        print_error(log, len);
+        return tlen;
+    }
+    len = sprintf(log, "%d byte(s) was sent to fd: %d over UDP!\n",
+                  tlen, udp_sock->fd);
+    print_log(log, len);
+    print_msg(buf, tlen, MESSAGE_OUT);
     return tlen;
 }
 
@@ -102,4 +139,14 @@ void clear_line() {
 void close_endpoint(int status) {
     enable_echo();
     exit(status);
+}
+
+void free_list_udp(udp_t **head, fd_set *temp_fd_set) {
+    while (*head != NULL) {
+        FD_CLR((*head)->fd, temp_fd_set);
+        close((*head)->fd);
+        free(*head);
+        *head = NULL;
+        *head = (*head)->next;
+    }
 }
