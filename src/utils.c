@@ -108,9 +108,9 @@ int send_buf(const char *buf, int slen, int fd) {
     return tlen;
 }
 
-int send_udp_buf(const char *buf, int slen, udp_t *udp_sock) {
-    int tlen = sendto(udp_sock->fd, buf, slen, 0,
-                      (struct sockaddr *)&udp_sock->sock_addr,
+int send_udp_buf(const char *buf, int slen, client_t *client) {
+    int tlen = sendto(client->udp_fd, buf, slen, 0,
+                      (struct sockaddr *)&client->udp_sock_addr,
                       sizeof(struct sockaddr));
     char log[MAX_SIZE_OF_LOG];
     int len;
@@ -120,7 +120,7 @@ int send_udp_buf(const char *buf, int slen, udp_t *udp_sock) {
         return tlen;
     }
     len = sprintf(log, "%d byte(s) was sent to fd: %d over UDP!\n",
-                  tlen, udp_sock->fd);
+                  tlen, client->udp_fd);
     print_log(log, len);
     print_msg(buf, tlen, MESSAGE_OUT);
     return tlen;
@@ -139,15 +139,4 @@ void clear_line() {
 void close_endpoint(int status) {
     enable_echo();
     exit(status);
-}
-
-void free_list_udp(udp_t **head, fd_set *temp_fd_set) {
-    udp_t *udp_next = NULL;
-    while (*head != NULL) {
-        FD_CLR((*head)->fd, temp_fd_set);
-        close((*head)->fd);
-        udp_next = (*head)->next;
-        free(*head);
-        *head = udp_next;
-    }
 }

@@ -31,15 +31,13 @@ int main(int argc, const char *argv[]) {
     int max_fd = server_fd;
     client_t *client_list = NULL;
     question_t *question_list = NULL;
-    udp_t *udp_list = NULL;
     echo_stdin("", 0);
     while (1) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&client_list, &question_list, &udp_list, &max_fd,
+        monitor_fds(&client_list, &question_list, &max_fd,
                     &working_fd_set, &temp_fd_set, server_fd);
     }
-    free_list_udp(&udp_list, &temp_fd_set);
     free_mem(&client_list, &question_list);
     close(server_fd);
     close_endpoint(EXIT_SUCCESS);
@@ -99,44 +97,31 @@ void listen_port(int server_fd) {
     }
 }
 
-void monitor_fds(client_t **c_list, question_t **q_list, udp_t **udp_list,
-                 int *max_fd, fd_set *working_fd_set, fd_set *temp_fd_set,
-                 int server_fd) {
+void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd, 
+                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(c_list, q_list, udp_list, i, max_fd,
+            process_ready_fds(c_list, q_list, i, max_fd,
                               temp_fd_set, server_fd);
         }
     }
 }
 
-void process_ready_fds(client_t **c_list, question_t **q_list,
-                       udp_t **udp_list, int fd, int *max_fd,
-                       fd_set *temp_fd_set, int server_fd) {
-    udp_t *udp_socket = find_udp_sock_by_fd(*udp_list, fd);
+void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
+                       int *max_fd, fd_set *temp_fd_set, int server_fd) {
+    client_t *client = find_client_by_fd(*c_list, fd);
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else if (fd == server_fd) {
         process_server_fd(c_list, max_fd, temp_fd_set, server_fd);
-    } else if (udp_socket != NULL) {
-        process_broadcast_msg(udp_socket);
+    } else if (client->tcp_fd == fd) {
+        process_client_fd(c_list, q_list, client, max_fd, temp_fd_set);
     } else {
-        process_client_fd(c_list, q_list, udp_list, fd, max_fd, temp_fd_set);
+        process_broadcast_msg(client);
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, server_fd, c_list, q_list, udp_list,
-                  temp_fd_set);
-}
-
-udp_t *find_udp_sock_by_fd(udp_t *udp_list, int fd) {
-    while (udp_list != NULL) {
-        if (udp_list->fd == fd) {
-            return udp_list;
-        }
-        udp_list = udp_list->next;
-    }
-    return NULL;
+    process_stdin(term_buf, len, server_fd, c_list, q_list);
 }
 
 void process_server_fd(client_t **c_list, int *max_fd,
@@ -170,62 +155,62 @@ int accept_client(client_t **c_list, int server_fd) {
 
 void add_new_client(client_t **c_list, int client_fd) {
     client_t *new_client = malloc(sizeof(client_t));
-    new_client->fd = client_fd;
+    memset(new_client, 0, sizeof(client_t));
+    new_client->tcp_fd = client_fd;
+    new_client->udp_fd = -1;
     new_client->role = ROLE_NONE;
-    new_client->retries = 0;
     new_client->next = *c_list;
     *c_list = new_client;
 }
 
-void process_broadcast_msg(udp_t *udp_sock) {
+void process_broadcast_msg(client_t *client) {
     char rbuf[MAX_SIZE_OF_BUF];
-    int rlen = receive_udp_buf(rbuf, udp_sock->fd);
+    int rlen = receive_udp_buf(rbuf, client->udp_fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        send_udp_buf(rbuf, rlen, udp_sock);
+        send_udp_buf(rbuf, rlen, client);
     }
 }
 
 void process_client_fd(client_t **c_list, question_t **q_list,
-                       udp_t **udp_list, int fd, int *max_fd,
-                       fd_set *temp_fd_set) {
+                       client_t *client, int *max_fd, fd_set *temp_fd_set) {
     char rbuf[MAX_SIZE_OF_BUF];
-    int rlen = receive_buf(rbuf, fd);
+    int rlen = receive_buf(rbuf, client->tcp_fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        process_msg(c_list, q_list, udp_list, rbuf, rlen,
-                    fd, max_fd, temp_fd_set);
+        process_msg(c_list, q_list, client, rbuf,
+                    rlen, max_fd, temp_fd_set);
     }
 }
 
-void process_msg(client_t **c_list, question_t **q_list, udp_t **udp_list,
-                 const char *rbuf, int rlen, int client_fd, int *max_fd,
+void process_msg(client_t **c_list, question_t **q_list, client_t *client,
+                 const char *rbuf, int rlen, int *max_fd,
                  fd_set *temp_fd_set) {
-    client_t *client = find_client_by_fd(*c_list, client_fd);
     if (rlen == 0) {
-        remove_client(c_list, client_fd, temp_fd_set);
+        remove_client(c_list, client, temp_fd_set);
     } else if (strncmp(rbuf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
         set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN, client);
     } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
-        ask_question(&rbuf[ASK_QN_CMD_LEN], rlen - ASK_QN_CMD_LEN, client,
-                        q_list);
+        ask_question(&rbuf[ASK_QN_CMD_LEN], rlen - ASK_QN_CMD_LEN,
+                     client, q_list);
     } else if (strncmp(rbuf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
         get_questions_list(client, *q_list);
     } else if (strncmp(rbuf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
-        select_question(&rbuf[SELECT_QN_CMD_LEN], client, *q_list, udp_list,
-                        max_fd, temp_fd_set);
+        select_question(&rbuf[SELECT_QN_CMD_LEN], client,
+                        *q_list, max_fd, temp_fd_set);
     } else if (strncmp(rbuf, CONN_CLOSE, CONN_CLOSE_LEN) == 0) {
 
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
-        send_buf(tbuf, tlen, client->fd);
+        send_buf(tbuf, tlen, client->tcp_fd);
     }
 }
 
 client_t *find_client_by_fd(client_t *c_list, int client_fd) {
     while (c_list != NULL) {
-        if (c_list->fd == client_fd) {
+        if (c_list->tcp_fd == client_fd ||
+            c_list->udp_fd == client_fd) {
             return c_list;
         }
         c_list = c_list->next;
@@ -233,26 +218,26 @@ client_t *find_client_by_fd(client_t *c_list, int client_fd) {
     return NULL;
 }
 
-void remove_client(client_t **c_list, int fd,
-                   fd_set *temp_fd_set) {
-    close(fd);
-    FD_CLR(fd, temp_fd_set);
-    remove_node(c_list, fd);
+void remove_client(client_t **c_list, client_t *client, fd_set *temp_fd_set) {
+    close(client->tcp_fd);
+    FD_CLR(client->tcp_fd, temp_fd_set);
+    remove_node(c_list, client);
     char log[MAX_SIZE_OF_LOG];
-    int len = sprintf(log, "Client connection was closed fd: %d!\n", fd);
+    int len = sprintf(log, "Client connection was closed fd: %d!\n",
+                      client->tcp_fd);
     print_info(log, len);
 }
 
-void remove_node(client_t **list, int fd) {
+void remove_node(client_t **list, client_t *client) {
     client_t *curr_node = *list;
-    if (curr_node->fd == fd) {
+    if (curr_node == client) {
         *list = curr_node->next;
         free(curr_node);
         return;
     }
     client_t *perv = NULL;
     while (curr_node != NULL) {
-        if (curr_node->fd == fd) {
+        if (curr_node == client) {
             perv->next = curr_node->next;
             free(curr_node);
             return;
@@ -270,7 +255,7 @@ void set_role(const char *rbuf, int rlen, client_t *client) {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid role! ");
         tlen += sprintf(&tbuf[tlen], "Which one are you? (S)tudent/(T)A");
-        send_buf(tbuf, tlen, client->fd);
+        send_buf(tbuf, tlen, client->tcp_fd);
     }
 }
 
@@ -281,17 +266,17 @@ void assign_role(char role, client_t *client) {
         SET_FIRST_ROLE_TRY(client->retries);
         tlen = sprintf(tbuf, "Are you sure to change the role?\n");
         tlen += sprintf(&tbuf[tlen], "Enter again to confirm.");
-        send_buf(tbuf, tlen, client->fd);
+        send_buf(tbuf, tlen, client->tcp_fd);
     } else {
         CLR_FIRST_ROLE_TRY(client->retries);
         client->role = role;
         char log[MAX_SIZE_OF_LOG];
         int len = sprintf(log, "Role assigned to %s for fd: %d!\n",
-                          ROLE_STR[(role == ROLE_TA) ? 1 : 0], client->fd);
+                          ROLE_STR[(role == ROLE_TA) ? 1 : 0], client->tcp_fd);
         print_info(log, len);
         tlen = sprintf(tbuf, "Role assigned to %s!",
                        ROLE_STR[(role == ROLE_TA) ? 1 : 0]);
-        send_buf(tbuf, tlen, client->fd);
+        send_buf(tbuf, tlen, client->tcp_fd);
     }
 }
 
@@ -307,7 +292,7 @@ void ask_question(const char *rbuf, int rlen, client_t *client,
         add_new_question(rbuf, rlen, client, q_list);
         tlen = sprintf(tbuf, "Question registered!");
     }
-    send_buf(tbuf, tlen, client->fd);
+    send_buf(tbuf, tlen, client->tcp_fd);
 }
 
 void add_new_question(const char *rbuf, int rlen, client_t *client,
@@ -317,7 +302,7 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
     question->question_num = question_num++;
     question->q_str = malloc(rlen);
     memcpy(question->q_str, rbuf, rlen);
-    question->asked_by = client->fd;
+    question->asked_by = client->tcp_fd;
     question->a_str = NULL;
     question->answered_by = -1;
     question->next = *q_list;
@@ -339,7 +324,7 @@ void get_questions_list(client_t *client, question_t *q_list) {
         }
         --tlen;
     }
-    send_buf(tbuf, tlen, client->fd);
+    send_buf(tbuf, tlen, client->tcp_fd);
 }
 
 void send_question(client_t *client, question_t *q_list,
@@ -350,7 +335,7 @@ void send_question(client_t *client, question_t *q_list,
                              q_list->q_str);
         } else {
             --*tlen;
-            send_buf(tbuf, *tlen, client->fd);
+            send_buf(tbuf, *tlen, client->tcp_fd);
             *tlen = sprintf(tbuf, "Q%d: %s\n", q_list->question_num,
                             q_list->q_str);
         }
@@ -358,7 +343,7 @@ void send_question(client_t *client, question_t *q_list,
 }
 
 void select_question(const char *rbuf, client_t *client, question_t *q_list,
-                     udp_t **udp_list, int *max_fd, fd_set *temp_fd_set) {
+                     int *max_fd, fd_set *temp_fd_set) {
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen;
     if (client->role == ROLE_NONE) {
@@ -366,18 +351,18 @@ void select_question(const char *rbuf, client_t *client, question_t *q_list,
     } else if (client->role == ROLE_STUDENT) {
         tlen = sprintf(tbuf, "This command is for TAs!");
     } else {
-        tlen = process_select_question(q_list, udp_list, tbuf, atoi(rbuf),
+        tlen = process_select_question(client, q_list, tbuf, atoi(rbuf),
                                        max_fd, temp_fd_set);
     }
-    send_buf(tbuf, tlen, client->fd);
+    send_buf(tbuf, tlen, client->tcp_fd);
 }
 
-int process_select_question(question_t *q_list, udp_t **udp_list, char *tbuf,
+int process_select_question(client_t *client, question_t *q_list, char *tbuf,
                             int q_num, int *max_fd, fd_set *temp_fd_set) {
     int tlen;
     question_t *question = find_question_by_number(q_list, q_num);
     if (question != NULL) {
-        tlen = process_connection(udp_list, tbuf, max_fd, temp_fd_set);
+        tlen = process_connection(client, tbuf, max_fd, temp_fd_set);
     } else {
         tlen = sprintf(tbuf, "Question not found!");
     }
@@ -394,17 +379,15 @@ question_t *find_question_by_number(question_t *q_list, int question_num) {
     return NULL;
 }
 
-int process_connection(udp_t **udp_list, char *tbuf, int *max_fd,
+int process_connection(client_t *client, char *tbuf, int *max_fd,
                        fd_set *temp_fd_set) {
     static int udp_port = 50000;
     int tlen;
-    udp_t *udp_socket = setup_udp_connection(udp_port);
-    if (udp_socket != NULL) {
-        udp_socket->next = *udp_list;
-        *udp_list = udp_socket;
-        FD_SET(udp_socket->fd, temp_fd_set);
-        if (udp_socket->fd > *max_fd) {
-            *max_fd = udp_socket->fd;
+    setup_udp_connection(client, udp_port);
+    if (client->udp_fd >= 0) {
+        FD_SET(client->udp_fd, temp_fd_set);
+        if (client->udp_fd > *max_fd) {
+            *max_fd = client->udp_fd;
         }
         tlen = sprintf(tbuf, "%s%d!", CONN_STAB, udp_port);
         udp_port += 2;
@@ -414,22 +397,19 @@ int process_connection(udp_t **udp_list, char *tbuf, int *max_fd,
     return tlen;
 }
 
-udp_t *setup_udp_connection(int port) {
+void setup_udp_connection(client_t *client, int port) {
     int udp_fd = create_udp_socket();
     if (udp_fd < 0) {
-        return NULL;
+        return;
     }
     if (bind_udp_port(udp_fd, port) != RET_OK) {
         close(udp_fd);
-        return NULL;
+        return;
     }
-    udp_t *udp_socket = malloc(sizeof(udp_t));
-    memset(udp_socket, 0, sizeof(udp_t));
-    udp_socket->sock_addr.sin_family = AF_INET;
-    udp_socket->sock_addr.sin_port = htons(port + 1);
-    udp_socket->sock_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-    udp_socket->fd = udp_fd;
-    return udp_socket;
+    client->udp_sock_addr.sin_family = AF_INET;
+    client->udp_sock_addr.sin_port = htons(port + 1);
+    client->udp_sock_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    client->udp_fd = udp_fd;
 }
 
 int create_udp_socket() {
@@ -465,7 +445,7 @@ int bind_udp_port(int fd, int port) {
     return RET_OK;
 }
 
-void free_mem(client_t **c_list, question_t **q_list) { 
+void free_mem(client_t **c_list, question_t **q_list) {
     client_t *c_next = NULL;
     while (*c_list != NULL) {
         c_next = (*c_list)->next;
@@ -489,9 +469,8 @@ void free_mem(client_t **c_list, question_t **q_list) {
 }
 
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
-                   question_t **q_list, udp_t **udp_list, fd_set *temp_fd_set) {
+                   question_t **q_list) {
     if (strcmp(buf, "exit\n") == 0) {
-        free_list_udp(udp_list, temp_fd_set);
         free_mem(c_list, q_list);
         close(fd);
         close_endpoint(EXIT_SUCCESS);

@@ -49,11 +49,14 @@ extern const char *ROLE_STR[];
 #define ANSI_COLOR_WHT "\e[37m"
 #define ANSI_CODE_LEN 5
 
-typedef struct udp_t {
-    struct sockaddr_in sock_addr;
-    struct udp_t *next;
-    int fd;
-} udp_t;
+typedef struct client_t {
+    struct sockaddr_in udp_sock_addr;
+    struct client_t *next;
+    int tcp_fd;
+    int udp_fd;
+    int retries;
+    char role;
+} client_t;
 
 void enable_echo();
 void disable_echo();
@@ -62,10 +65,9 @@ void process_stdin_fd(char *buf);
 int receive_buf(char *rbuf, int fd);
 int receive_udp_buf(char *rbuf, int fd);
 int send_buf(const char *buf, int slen, int fd);
-int send_udp_buf(const char *buf, int slen, udp_t *udp_sock);
+int send_udp_buf(const char *buf, int slen, client_t *client);
 void echo_stdin(const char *buf, int len);
 void clear_line();
 void close_endpoint(int status);
-void free_list_udp(udp_t **head, fd_set *temp_fd_set);
 
 #endif /* __UTILS_H */

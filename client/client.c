@@ -22,20 +22,19 @@ int main(int argc, const char *argv[]) {
         close_endpoint(EXIT_FAILURE);
     }
     int port = atoi(argv[1]);
-    int server_fd = setup_client();
-    connect_to_server(server_fd, port);
+    client_t client = {0};
+    client.tcp_fd = setup_client();
+    connect_to_server(client.tcp_fd, port);
     fd_set working_fd_set, temp_fd_set;
-    fd_set_init(&temp_fd_set, server_fd);
-    int max_fd = server_fd;
-    udp_t *udp_socket = NULL;
+    fd_set_init(&temp_fd_set, client.tcp_fd);
+    int max_fd = client.tcp_fd;
     echo_stdin("", 0);
     while (1) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&max_fd, &working_fd_set, &temp_fd_set, server_fd,
-                    &udp_socket);
+        monitor_fds(&max_fd, &working_fd_set, &temp_fd_set, &client);
     }
-    close(server_fd);
+    close(client.tcp_fd);
     close_endpoint(EXIT_SUCCESS);
 }
 
@@ -63,72 +62,70 @@ void connect_to_server(int server_fd, int port) {
     print_success(log, len);
 }
 
-void monitor_fds(int *max_fd, fd_set *working_fd_set,
-                 fd_set *temp_fd_set, int server_fd, udp_t **udp_sock) {
+void monitor_fds(int *max_fd, fd_set *working_fd_set, fd_set *temp_fd_set,
+                 client_t *client) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(i, max_fd, temp_fd_set, server_fd, udp_sock);
+            process_ready_fds(i, max_fd, temp_fd_set, client);
         }
     }
 }
 
 void process_ready_fds(int fd, int *max_fd, fd_set *temp_fd_set,
-                       int server_fd, udp_t **udp_sock) {
+                       client_t *client) {
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else {
-        process_server_fd(fd, max_fd, temp_fd_set, udp_sock);
+        process_server_fd(fd, max_fd, temp_fd_set, client);
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, server_fd, udp_sock, temp_fd_set);
+    process_stdin(term_buf, len, client);
 }
 
 void process_server_fd(int fd, int *max_fd, fd_set *temp_fd_set,
-                       udp_t **udp_sock) {
+                       client_t *client) {
     char rbuf[MAX_SIZE_OF_BUF];
     int rlen;
-    if (*udp_sock != NULL && (*udp_sock)->fd == fd) {
+    if (client->udp_fd == fd) {
         rlen = receive_udp_buf(rbuf, fd);
     } else {
         rlen = receive_buf(rbuf, fd);
         if (rlen >= 0) {
-            process_msg(rbuf, rlen, fd, max_fd, temp_fd_set, udp_sock);
+            process_msg(rbuf, rlen, fd, max_fd, temp_fd_set, client);
         }
     }
 }
 
 void process_msg(const char *rbuf, int rlen, int server_fd,
-                 int *max_fd, fd_set *temp_fd_set, udp_t **udp_sock) {
+                 int *max_fd, fd_set *temp_fd_set, client_t *client) {
     if (rlen == 0) {
-        remove_server(server_fd, temp_fd_set, udp_sock);
+        remove_server(server_fd, temp_fd_set, client);
     } else if (strncmp(rbuf, CONN_STAB, CONN_STAB_LEN) == 0) {
         process_connection(&rbuf[CONN_STAB_LEN], server_fd, max_fd,
-                           temp_fd_set, udp_sock);
+                           temp_fd_set, client);
     } else {
 
     }
 }
 
-void remove_server(int server_fd, fd_set *temp_fd_set, udp_t **udp_sock) {
+void remove_server(int server_fd, fd_set *temp_fd_set, client_t *client) {
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Server connection was closed! fd: %d\n",
                       server_fd);
     print_info(log, len);
-    close(server_fd);
-    FD_CLR(server_fd, temp_fd_set);
-    free_list_udp(udp_sock, temp_fd_set);
+    FD_CLR(client->tcp_fd, temp_fd_set);
+    close(client->tcp_fd);
 }
 
 void process_connection(const char *buf, int server_fd, int *max_fd,
-                        fd_set *temp_fd_set, udp_t **udp_sock) {
-    *udp_sock = setup_udp_connection(atoi(buf));
-    if (*udp_sock != NULL) {
-        FD_SET((*udp_sock)->fd, temp_fd_set);
-        if ((*udp_sock)->fd > *max_fd) {
-            *max_fd = (*udp_sock)->fd;
+                        fd_set *temp_fd_set, client_t *client) {
+    setup_udp_connection(client, atoi(buf));
+    if (client->udp_fd >= 0) {
+        FD_SET(client->udp_fd, temp_fd_set);
+        if (client->udp_fd > *max_fd) {
+            *max_fd = client->udp_fd;
         }
-        (*udp_sock)->next = NULL;
         char log[MAX_SIZE_OF_LOG];
         int len = sprintf(log, "Connection created successfully!\n");
         print_success(log, len);
@@ -139,22 +136,19 @@ void process_connection(const char *buf, int server_fd, int *max_fd,
     }
 }
 
-udp_t *setup_udp_connection(int port) {
+void setup_udp_connection(client_t *client, int port) {
     int udp_fd = create_udp_socket();
     if (udp_fd < 0) {
-        return NULL;
+        return;
     }
     if (bind_udp_port(udp_fd, port + 1) != RET_OK) {
         close(udp_fd);
-        return NULL;
+        return;
     }
-    udp_t *udp_socket = malloc(sizeof(udp_t));
-    memset(udp_socket, 0, sizeof(udp_t));
-    udp_socket->sock_addr.sin_family = AF_INET;
-    udp_socket->sock_addr.sin_port = htons(port);
-    udp_socket->sock_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    udp_socket->fd = udp_fd;
-    return udp_socket;
+    client->udp_sock_addr.sin_family = AF_INET;
+    client->udp_sock_addr.sin_port = htons(port);
+    client->udp_sock_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    client->udp_fd = udp_fd;
 }
 
 int create_udp_socket() {
@@ -190,13 +184,11 @@ int bind_udp_port(int fd, int port) {
     return RET_OK;
 }
 
-void process_stdin(char *buf, int rlen, int fd, udp_t **udp_sock,
-                   fd_set *temp_fd_set) {
+void process_stdin(char *buf, int rlen, client_t *client) {
     int need_send = 0;
     if (rlen > 1 && buf[rlen - 1] == '\n') {
         if (strcmp(buf, "exit\n") == 0) {
-            free_list_udp(udp_sock, temp_fd_set);
-            close(fd);
+            close(client->tcp_fd);
             close_endpoint(EXIT_SUCCESS);
         } else if (strcmp(buf, "help\n") == 0) {
             print_man();
@@ -210,7 +202,7 @@ void process_stdin(char *buf, int rlen, int fd, udp_t **udp_sock,
         } else if (strncmp(buf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
             need_send = select_question(&buf[SELECT_QN_CMD_LEN]);
         } else if (strncmp(buf, UDP_MODE, UDP_MODE_LEN) == 0) {
-            send_to_broadcast(&buf[UDP_MODE_LEN], rlen - UDP_MODE_LEN, *udp_sock);
+            send_to_broadcast(&buf[UDP_MODE_LEN], rlen - UDP_MODE_LEN, client);
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;
@@ -218,7 +210,7 @@ void process_stdin(char *buf, int rlen, int fd, udp_t **udp_sock,
             print_error(log, len);
         }
         if (need_send) {
-            send_buf(buf, rlen - 1, fd);
+            send_buf(buf, rlen - 1, client->tcp_fd);
         }
         buf[0] = '\0';
         write(STDOUT_FILENO, "<< ", 3);
@@ -298,9 +290,9 @@ int select_question(const char *buf) {
     return ret_val;
 }
 
-void send_to_broadcast(const char *buf, int rlen, udp_t *udp_sock) {
-    if (udp_sock != NULL) {
-        send_udp_buf(buf, rlen - 1, udp_sock);
+void send_to_broadcast(const char *buf, int rlen, client_t *client) {
+    if (client->udp_fd >= 0) {
+        send_udp_buf(buf, rlen - 1, client);
     } else {
         char log[MAX_SIZE_OF_LOG];
         int len;
