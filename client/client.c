@@ -33,7 +33,8 @@ int main(int argc, const char *argv[]) {
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
         monitor_fds(&max_fd, &working_fd_set, &temp_fd_set, server_fd);
     }
-    return EXIT_SUCCESS;
+    close(server_fd);
+    close_endpoint(EXIT_SUCCESS);
 }
 
 int setup_client() {
@@ -53,6 +54,7 @@ void connect_to_server(int server_fd, int port) {
                 sizeof(socket_addr)) < 0) {
         len = sprintf(log, "Connecting to server failed!\n");
         print_error(log, len);
+        close(server_fd);
         close_endpoint(EXIT_FAILURE);
     }
     len = sprintf(log, "Connected to server successfully!\n");
@@ -109,6 +111,7 @@ void process_stdin(char *buf, int rlen, int fd) {
     int need_send = 0;
     if (rlen > 1 && buf[rlen - 1] == '\n') {
         if (strcmp(buf, "exit\n") == 0) {
+            close(fd);
             close_endpoint(EXIT_SUCCESS);
         } else if (strcmp(buf, "help\n") == 0) {
             print_man();

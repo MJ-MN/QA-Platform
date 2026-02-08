@@ -62,5 +62,5 @@ void send_question(client_t *client, question_t *q_list,
                    char *tbuf, int *tlen);
 void free_mem(client_t *c_list, question_t *q_list);
 void process_stdin(char *buf, int len, client_t *c_list,
-                   question_t *q_list);
+                   question_t *q_list, int fd);
 #endif /* __SERVER_H */

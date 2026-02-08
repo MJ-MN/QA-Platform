@@ -39,6 +39,7 @@ int main(int argc, const char *argv[]) {
                     &temp_fd_set, server_fd);
     }
     free_mem(client_list, question_list);
+    close(server_fd);
     close_endpoint(EXIT_SUCCESS);
 }
 
@@ -79,6 +80,7 @@ void bind_port(int server_fd, int port) {
              sizeof(socket_addr)) < 0) {
         len = sprintf(log, "Port binding failed!\n");
         print_error(log, len);
+        close(server_fd);
         close_endpoint(EXIT_FAILURE);
     }
 }
@@ -90,6 +92,7 @@ void listen_port(int server_fd) {
     if (listen(server_fd, MAX_LEN_OF_QUEUE) < 0) {
         len = sprintf(log, "Port listening failed!\n");
         print_error(log, len);
+        close(server_fd);
         close_endpoint(EXIT_FAILURE);
     }
 }
@@ -115,7 +118,7 @@ void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, *c_list, *q_list);
+    process_stdin(term_buf, len, *c_list, *q_list, server_fd);
 }
 
 void process_server_fd(client_t **c_list, int *max_fd,
@@ -327,7 +330,7 @@ void send_question(client_t *client, question_t *q_list,
             send_buf(tbuf, *tlen, client->fd);
             print_msg(tbuf, *tlen, MESSAGE_OUT);
             *tlen = sprintf(tbuf, "Q%d: %s\n", q_list->question_num,
-                           q_list->q_str);
+                            q_list->q_str);
         }
     }
 }
@@ -348,9 +351,10 @@ void free_mem(client_t *c_list, question_t *q_list) {
 }
 
 void process_stdin(char *buf, int len, client_t *c_list,
-                   question_t *q_list) {
+                   question_t *q_list, int fd) {
     if (strcmp(buf, "exit\n") == 0) {
         free_mem(c_list, q_list);
+        close(fd);
         close_endpoint(EXIT_SUCCESS);
     } else if (len > 0 && buf[len - 1] == '\n') {
         write(STDOUT_FILENO, "<< ", 3);
