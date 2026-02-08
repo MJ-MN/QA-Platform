@@ -129,8 +129,7 @@ void process_server_fd(client_t **c_list, int *max_fd,
         *max_fd = new_client_fd;
     }
     char tbuf[MAX_SIZE_OF_BUF];
-    int tlen;
-    tlen = sprintf(tbuf, "Which one are you? (S)tudent/(T)A");
+    int tlen = sprintf(tbuf, "Which one are you? (S)tudent/(T)A");
     send_buf(tbuf, tlen, new_client_fd);
     print_msg(tbuf, tlen, MESSAGE_OUT);
 }
@@ -184,10 +183,11 @@ void process_msg(client_t **c_list, question_t **q_list, const char *rbuf,
                      q_list);
     } else if (strncmp(rbuf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
         get_questions_list(client, *q_list);
+    } else if (strncmp(rbuf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
+        select_question(&rbuf[SELECT_QN_CMD_LEN], client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
-        int tlen;
-        tlen = sprintf(tbuf, "Invalid command!");
+        int tlen = sprintf(tbuf, "Invalid command!");
         send_buf(tbuf, tlen, client->fd);
         print_msg(tbuf, tlen, MESSAGE_OUT);
     }
@@ -239,8 +239,7 @@ void set_role(const char *rbuf, int rlen, client_t *client) {
         assign_role(role, client);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
-        int tlen;
-        tlen = sprintf(tbuf, "Invalid role! ");
+        int tlen = sprintf(tbuf, "Invalid role! ");
         tlen += sprintf(&tbuf[tlen], "Which one are you? (S)tudent/(T)A");
         send_buf(tbuf, tlen, client->fd);
         print_msg(tbuf, tlen, MESSAGE_OUT);     
@@ -333,6 +332,40 @@ void send_question(client_t *client, question_t *q_list,
                             q_list->q_str);
         }
     }
+}
+
+void select_question(const char *rbuf, client_t *client, question_t *q_list) {
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_STUDENT) {
+        tlen = sprintf(tbuf, "This command is for TAs!");
+    } else {
+        tlen = process_select_question(q_list, tbuf, atoi(rbuf));
+    }
+    send_buf(tbuf, tlen, client->fd);
+}
+
+int process_select_question(question_t *q_list, char *tbuf, int q_num) {
+    int tlen;
+    question_t *question = find_question_by_number(q_list, q_num);
+    if (question != NULL) {
+
+    } else {
+        tlen = sprintf(tbuf, "Question not found!");
+    }
+    return tlen;
+}
+
+question_t *find_question_by_number(question_t *q_list, int question_num) {
+    while (q_list != NULL) {
+        if (q_list->question_num == question_num) {
+            return q_list;
+        }
+        q_list = q_list->next;
+    }
+    return NULL;
 }
 
 void free_mem(client_t *c_list, question_t *q_list) {

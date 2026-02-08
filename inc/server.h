@@ -60,6 +60,9 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
 void get_questions_list(client_t *client, question_t *q_list);
 void send_question(client_t *client, question_t *q_list,
                    char *tbuf, int *tlen);
+void select_question(const char *rbuf, client_t *client, question_t *q_list);
+int process_select_question(question_t *q_list, char *tbuf, int q_num);
+question_t *find_question_by_number(question_t *q_list, int question_num);
 void free_mem(client_t *c_list, question_t *q_list);
 void process_stdin(char *buf, int len, client_t *c_list,
                    question_t *q_list, int fd);

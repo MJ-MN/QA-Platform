@@ -122,6 +122,8 @@ void process_stdin(char *buf, int rlen, int fd) {
             need_send = ask_question(rlen - ASK_QN_CMD_LEN);
         } else if (strncmp(buf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
             need_send = 1;
+        } else if (strncmp(buf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
+            need_send = select_question(&buf[SELECT_QN_CMD_LEN]);
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;
@@ -147,6 +149,9 @@ void print_man() {
     print_log(log, len);
     len = sprintf(log, GET_QN_LS_CMD);
     len += sprintf(&log[GET_QN_LS_CMD_LEN], "\n");
+    print_log(log, len);
+    len = sprintf(log, SELECT_QN_CMD);
+    len += sprintf(&log[SELECT_QN_CMD_LEN], "<question_number>\n");
     print_log(log, len);
     len = sprintf(log, SET_QN_STS_CMD);
     len += sprintf(&log[SET_QN_STS_CMD_LEN], "<status>\n");
@@ -182,6 +187,23 @@ int ask_question(int rlen) {
         int len;
         len = sprintf(log, "Too short question!\n");
         print_error(log, len);
+    }
+    return ret_val;
+}
+
+int select_question(const char *buf) {
+    int ret_val = RET_OK;
+    int i = 0;
+    while (buf[i] != '\n') {
+        if (buf[i] < ASCII_0 || buf[i] > ASCII_9) {
+            char log[MAX_SIZE_OF_LOG];
+            int len;
+            len = sprintf(log, "Invalid question number!\n");
+            print_error(log, len);
+            ret_val = RET_ERR;
+            break;
+        }
+        ++i;
     }
     return ret_val;
 }

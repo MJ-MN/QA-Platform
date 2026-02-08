@@ -15,5 +15,6 @@ void process_stdin(char *buf, int rlen, int fd);
 void print_man();
 int set_role(const char *buf, int rlen);
 int ask_question(int rlen);
+int select_question(const char *buf);
 
 #endif /* __CLIENT_H */
