@@ -38,7 +38,7 @@ int main(int argc, const char *argv[]) {
         monitor_fds(&client_list, &question_list, &max_fd,
                     &working_fd_set, &temp_fd_set, server_fd);
     }
-    free_mem(&client_list, &question_list);
+    free_mem(&client_list, &question_list, &temp_fd_set);
     close(server_fd);
     close_endpoint(EXIT_SUCCESS);
 }
@@ -121,7 +121,7 @@ void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, server_fd, c_list, q_list);
+    process_stdin(term_buf, len, server_fd, c_list, q_list, temp_fd_set);
 }
 
 void process_server_fd(client_t **c_list, int *max_fd,
@@ -199,7 +199,7 @@ void process_msg(client_t **c_list, question_t **q_list, client_t *client,
         select_question(&rbuf[SELECT_QN_CMD_LEN], client,
                         *q_list, max_fd, temp_fd_set);
     } else if (strncmp(rbuf, CONN_CLOSE, CONN_CLOSE_LEN) == 0) {
-
+        close_udp_socket(client, temp_fd_set);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
@@ -221,6 +221,7 @@ client_t *find_client_by_fd(client_t *c_list, int client_fd) {
 void remove_client(client_t **c_list, client_t *client, fd_set *temp_fd_set) {
     close(client->tcp_fd);
     FD_CLR(client->tcp_fd, temp_fd_set);
+    close_udp_socket(client, temp_fd_set);
     remove_node(c_list, client);
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Client connection was closed fd: %d!\n",
@@ -445,14 +446,16 @@ int bind_udp_port(int fd, int port) {
     return RET_OK;
 }
 
-void free_mem(client_t **c_list, question_t **q_list) {
+void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set) {
     client_t *c_next = NULL;
     while (*c_list != NULL) {
         c_next = (*c_list)->next;
+        FD_CLR((*c_list)->tcp_fd, temp_fd_set);
+        close((*c_list)->tcp_fd);
+        close_udp_socket(*c_list, temp_fd_set);
         free(*c_list);
         *c_list = c_next;
     }
-    *c_list = NULL;
     question_t *q_next = NULL;
     while (*q_list != NULL) {
         q_next = (*q_list)->next;
@@ -465,13 +468,13 @@ void free_mem(client_t **c_list, question_t **q_list) {
         free(*q_list);
         *q_list = q_next;
     }
-    *q_list = NULL;
 }
 
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
-                   question_t **q_list) {
+                   question_t **q_list, fd_set *temp_fd_set) {
     if (strcmp(buf, "exit\n") == 0) {
-        free_mem(c_list, q_list);
+        free_mem(c_list, q_list, temp_fd_set);
+        FD_CLR(fd, temp_fd_set);
         close(fd);
         close_endpoint(EXIT_SUCCESS);
     } else if (len > 0 && buf[len - 1] == '\n') {

@@ -17,7 +17,7 @@ void process_connection(const char *buf, int server_fd,
 void setup_udp_connection(client_t *client, int port);
 int create_udp_socket();
 int bind_udp_port(int fd, int port);
-void process_stdin(char *buf, int rlen, client_t *client);
+void process_stdin(char *buf, int rlen, client_t *client, fd_set *temp_fd_set);
 void print_man();
 int set_role(const char *buf, int rlen);
 int ask_question(int rlen);

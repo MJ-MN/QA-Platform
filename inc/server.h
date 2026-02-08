@@ -64,8 +64,8 @@ int process_connection(client_t *client, char *tbuf, int *max_fd,
 void setup_udp_connection(client_t *client, int port);
 int create_udp_socket();
 int bind_udp_port(int fd, int port);
-void free_mem(client_t **c_list, question_t **q_list);
+void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set);
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
-                   question_t **q_list);
+                   question_t **q_list, fd_set *temp_fd_set);
 
 #endif /* __SERVER_H */

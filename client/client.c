@@ -23,6 +23,7 @@ int main(int argc, const char *argv[]) {
     }
     int port = atoi(argv[1]);
     client_t client = {0};
+    client.udp_fd = -1;
     client.tcp_fd = setup_client();
     connect_to_server(client.tcp_fd, port);
     fd_set working_fd_set, temp_fd_set;
@@ -34,7 +35,9 @@ int main(int argc, const char *argv[]) {
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
         monitor_fds(&max_fd, &working_fd_set, &temp_fd_set, &client);
     }
+    FD_CLR(client.tcp_fd, &temp_fd_set);
     close(client.tcp_fd);
+    close_udp_socket(&client, &temp_fd_set);
     close_endpoint(EXIT_SUCCESS);
 }
 
@@ -80,7 +83,7 @@ void process_ready_fds(int fd, int *max_fd, fd_set *temp_fd_set,
     }
     int len = strlen(term_buf);
     echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, client);
+    process_stdin(term_buf, len, client, temp_fd_set);
 }
 
 void process_server_fd(int fd, int *max_fd, fd_set *temp_fd_set,
@@ -116,6 +119,7 @@ void remove_server(int server_fd, fd_set *temp_fd_set, client_t *client) {
     print_info(log, len);
     FD_CLR(client->tcp_fd, temp_fd_set);
     close(client->tcp_fd);
+    close_udp_socket(client, temp_fd_set);
 }
 
 void process_connection(const char *buf, int server_fd, int *max_fd,
@@ -184,11 +188,14 @@ int bind_udp_port(int fd, int port) {
     return RET_OK;
 }
 
-void process_stdin(char *buf, int rlen, client_t *client) {
+void process_stdin(char *buf, int rlen, client_t *client,
+                   fd_set *temp_fd_set) {
     int need_send = 0;
     if (rlen > 1 && buf[rlen - 1] == '\n') {
         if (strcmp(buf, "exit\n") == 0) {
+            FD_CLR(client->tcp_fd, temp_fd_set);
             close(client->tcp_fd);
+            close_udp_socket(client, temp_fd_set);
             close_endpoint(EXIT_SUCCESS);
         } else if (strcmp(buf, "help\n") == 0) {
             print_man();

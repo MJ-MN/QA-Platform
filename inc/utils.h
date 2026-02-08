@@ -69,5 +69,6 @@ int send_udp_buf(const char *buf, int slen, client_t *client);
 void echo_stdin(const char *buf, int len);
 void clear_line();
 void close_endpoint(int status);
+void close_udp_socket(client_t *client, fd_set *temp_fd_set);
 
 #endif /* __UTILS_H */

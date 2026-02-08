@@ -140,3 +140,11 @@ void close_endpoint(int status) {
     enable_echo();
     exit(status);
 }
+
+void close_udp_socket(client_t *client, fd_set *temp_fd_set) {
+    if (client->udp_fd >= 0) {
+        FD_CLR(client->udp_fd, temp_fd_set);
+        close(client->udp_fd);
+        client->udp_fd = -1;
+    }
+}
