@@ -182,7 +182,6 @@ void process_broadcast_msg(udp_t *udp_sock) {
     int rlen = receive_udp_buf(rbuf, udp_sock->fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        print_msg(rbuf, rlen, MESSAGE_IN);
         send_udp_buf(rbuf, rlen, udp_sock);
     }
 }
@@ -194,7 +193,6 @@ void process_client_fd(client_t **c_list, question_t **q_list,
     int rlen = receive_buf(rbuf, fd);
     if (rlen >= 0) {
         rbuf[rlen] = '\0';
-        print_msg(rbuf, rlen, MESSAGE_IN);
         process_msg(c_list, q_list, udp_list, rbuf, rlen,
                     fd, max_fd, temp_fd_set);
     }

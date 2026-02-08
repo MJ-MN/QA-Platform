@@ -142,11 +142,12 @@ void close_endpoint(int status) {
 }
 
 void free_list_udp(udp_t **head, fd_set *temp_fd_set) {
+    udp_t *udp_next = NULL;
     while (*head != NULL) {
         FD_CLR((*head)->fd, temp_fd_set);
         close((*head)->fd);
+        udp_next = (*head)->next;
         free(*head);
-        *head = NULL;
-        *head = (*head)->next;
+        *head = udp_next;
     }
 }
