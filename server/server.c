@@ -204,6 +204,8 @@ void process_msg(client_t **c_list, question_t **q_list, client_t *client,
                             rlen - SET_QN_STS_CMD_LEN, client, *q_list);
     } else if (strncmp(rbuf, GET_SESS_LS_CMD, GET_SESS_LS_CMD_LEN) == 0) {
         get_sessions_list(client, *q_list);
+    } else if (strncmp(rbuf, ATT_SESS_CMD, ATT_SESS_CMD_LEN) == 0) {
+        attend_session(&rbuf[ATT_SESS_CMD_LEN], *c_list, client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
@@ -521,6 +523,34 @@ void get_sessions_list(client_t *client, question_t *q_list) {
         tlen = sprintf(tbuf, "This command is for students!");
     }
     send_buf(tbuf, tlen, client->tcp_fd);
+}
+
+void attend_session(const char *rbuf, client_t *c_list,
+                    client_t *client, question_t *q_list) {
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_STUDENT) {
+        question_t *question = find_question_by_number(q_list, atoi(rbuf));
+        tlen = process_attend_session(c_list, question, tbuf);
+    } else {
+        tlen = sprintf(tbuf, "This command is for students!");
+    }
+    send_buf(tbuf, tlen, client->tcp_fd);
+}
+
+int process_attend_session(client_t *c_list, question_t *question,
+                           char *tbuf) {
+    int tlen;
+    if (question != NULL && question->status == ANSWERING) {
+        client_t *client = find_client_by_fd(c_list, question->answered_by);
+        tlen = sprintf(tbuf, "%s%d", SESS_ON_PRG,
+                       ntohs(client->udp_sock_addr.sin_port) - 1);
+    } else {
+        tlen = sprintf(tbuf, "Question not found!");
+    }
+    return tlen;
 }
 
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set) {

@@ -38,6 +38,8 @@
 #define QN_NOT_ANSWERED_LEN 13
 #define QN_ANSWERED " answered "
 #define QN_ANSWERED_LEN 10
+#define SESS_ON_PRG "Session is in progress on port: "
+#define SESS_ON_PRG_LEN 32
 
 #define ROLE_NONE '0'
 #define ROLE_STUDENT 'S'

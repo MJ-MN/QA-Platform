@@ -110,6 +110,9 @@ void process_msg(const char *rbuf, int rlen, int server_fd,
                                max_fd, temp_fd_set, client)) {
             client->question_num = atoi(&rbuf[UDP_PORT_LEN + QN_NUMBER_LEN]);
         }
+    } else if (strncmp(rbuf, SESS_ON_PRG, SESS_ON_PRG_LEN) == 0) {
+        process_connection(&rbuf[SESS_ON_PRG_LEN], server_fd, max_fd,
+                           temp_fd_set, client);
     } else {
         /* Do nothing */
     }
@@ -221,6 +224,9 @@ void process_stdin(char *buf, int rlen, client_t *client,
                                             rlen - SET_QN_STS_CMD_LEN, client);
         } else if (strncmp(buf, GET_SESS_LS_CMD, GET_SESS_LS_CMD_LEN) == 0) {
             need_send = 1;
+        } else if (strncmp(buf, ATT_SESS_CMD, ATT_SESS_CMD_LEN) == 0) {
+            need_send = attend_session(&buf[ATT_SESS_CMD_LEN],
+                                       rlen - ATT_SESS_CMD_LEN);
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;
@@ -354,6 +360,21 @@ int check_question_answer(const char *buf, int rlen) {
         int len;
         len = sprintf(log, "Invalid status!\n");
         print_error(log, len);
+    }
+    return ret_val;
+}
+
+int attend_session(const char *buf, int rlen) {
+    int ret_val = RET_ERR;
+    int session_num;
+    int session_num_len = stoi(buf, &session_num);
+    if (session_num_len != rlen - 1) {
+        char log[MAX_SIZE_OF_LOG];
+        int len;
+        len = sprintf(log, "Invalid session number!\n");
+        print_error(log, len);
+    } else {
+        ret_val = RET_OK;
     }
     return ret_val;
 }

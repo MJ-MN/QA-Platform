@@ -69,6 +69,10 @@ void set_question_status(const char *rbuf, int rlen, client_t *client,
 int process_question_answer(const char *rbuf, int rlen, char *tbuf,
                             client_t *client, question_t *q_list);
 void get_sessions_list(client_t *client, question_t *q_list);
+void attend_session(const char *rbuf, client_t *c_list,
+                    client_t *client, question_t *q_list);
+int process_attend_session(client_t *c_list, question_t *question,
+                           char *tbuf);
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set);
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
                    question_t **q_list, fd_set *temp_fd_set);
