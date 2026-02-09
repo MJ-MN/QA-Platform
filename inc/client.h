@@ -12,7 +12,7 @@ void process_server_fd(int fd, int *max_fd, fd_set *temp_fd_set,
 void process_msg(const char *rbuf, int rlen, int server_fd,
                  int *max_fd, fd_set *temp_fd_set, client_t *client);
 void remove_server(int server_fd, fd_set *temp_fd_set, client_t *client);
-void process_connection(const char *buf, int server_fd,
+int process_connection(const char *buf, int server_fd,
                         int *max_fd, fd_set *temp_fd_set, client_t *client);
 void setup_udp_connection(client_t *client, int port);
 int create_udp_socket();

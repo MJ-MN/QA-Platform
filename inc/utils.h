@@ -3,6 +3,8 @@
 
 #define MAX_SIZE_OF_BUF 1024
 #define MIN_SIZE_OF_QA 8
+#define STARTING_UDP_PORT 50000
+#define UDP_PORT_LEN 5
 
 #define RET_OK 1
 #define RET_ERR 0
@@ -21,10 +23,10 @@
 #define SELECT_QN_CMD_LEN 16
 #define SET_QN_STS_CMD "set_question_status "
 #define SET_QN_STS_CMD_LEN 20
-#define GET_SESH_LS_CMD "get_sessions_list"
-#define GET_SESH_LS_CMD_LEN 17
-#define ATT_SESH_CMD "attend_session "
-#define ATT_SESH_CMD_LEN 15
+#define GET_SESS_LS_CMD "get_sessions_list"
+#define GET_SESS_LS_CMD_LEN 17
+#define ATT_SESS_CMD "attend_session "
+#define ATT_SESS_CMD_LEN 15
 
 #define CONN_STAB "Connection was stablished on port "
 #define CONN_STAB_LEN 34

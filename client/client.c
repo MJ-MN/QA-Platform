@@ -24,6 +24,7 @@ int main(int argc, const char *argv[]) {
     int port = atoi(argv[1]);
     client_t client = {0};
     client.udp_fd = -1;
+    client.question_num = -1;
     client.tcp_fd = setup_client();
     connect_to_server(client.tcp_fd, port);
     fd_set working_fd_set, temp_fd_set;
@@ -105,10 +106,12 @@ void process_msg(const char *rbuf, int rlen, int server_fd,
     if (rlen == 0) {
         remove_server(server_fd, temp_fd_set, client);
     } else if (strncmp(rbuf, CONN_STAB, CONN_STAB_LEN) == 0) {
-        process_connection(&rbuf[CONN_STAB_LEN], server_fd, max_fd,
-                           temp_fd_set, client);
+        if (process_connection(&rbuf[CONN_STAB_LEN], server_fd,
+                               max_fd, temp_fd_set, client)) {
+            client->question_num = atoi(&rbuf[UDP_PORT_LEN + QN_NUMBER_LEN]);
+        }
     } else {
-
+        /* Do nothing */
     }
 }
 
@@ -122,17 +125,15 @@ void remove_server(int server_fd, fd_set *temp_fd_set, client_t *client) {
     close_udp_socket(client, temp_fd_set);
 }
 
-void process_connection(const char *buf, int server_fd, int *max_fd,
-                        fd_set *temp_fd_set, client_t *client) {
-    int port = 0;
-    int port_len = stoi(buf, &port);
-    setup_udp_connection(client, port);
+int process_connection(const char *buf, int server_fd, int *max_fd,
+                       fd_set *temp_fd_set, client_t *client) {
+    int ret_val = RET_OK;
+    setup_udp_connection(client, atoi(buf));
     if (client->udp_fd >= 0) {
         FD_SET(client->udp_fd, temp_fd_set);
         if (client->udp_fd > *max_fd) {
             *max_fd = client->udp_fd;
         }
-        client->question_num = atoi(&buf[port_len + QN_NUMBER_LEN]);
         char log[MAX_SIZE_OF_LOG];
         int len = sprintf(log, "Connection created successfully!\n");
         print_success(log, len);
@@ -140,7 +141,9 @@ void process_connection(const char *buf, int server_fd, int *max_fd,
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Connection cannot be stablished!");
         send_buf(tbuf, tlen, server_fd);
+        ret_val = RET_ERR;
     }
+    return ret_val;
 }
 
 void setup_udp_connection(client_t *client, int port) {
@@ -216,7 +219,7 @@ void process_stdin(char *buf, int rlen, client_t *client,
         } else if (strncmp(buf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
             need_send = set_question_status(&buf[SET_QN_STS_CMD_LEN],
                                             rlen - SET_QN_STS_CMD_LEN, client);
-        } else if (strncmp(buf, GET_SESH_LS_CMD, GET_SESH_LS_CMD_LEN) == 0) {
+        } else if (strncmp(buf, GET_SESS_LS_CMD, GET_SESS_LS_CMD_LEN) == 0) {
             need_send = 1;
         } else {
             char log[MAX_SIZE_OF_LOG];
@@ -254,11 +257,11 @@ void print_man() {
     len += sprintf(&log[SET_QN_STS_CMD_LEN],
                    "<question_number> <status> <answer>\n");
     print_log(log, len);
-    len = sprintf(log, GET_SESH_LS_CMD);
-    len += sprintf(&log[GET_SESH_LS_CMD_LEN], "\n");
+    len = sprintf(log, GET_SESS_LS_CMD);
+    len += sprintf(&log[GET_SESS_LS_CMD_LEN], "\n");
     print_log(log, len);
-    len = sprintf(log, ATT_SESH_CMD);
-    len += sprintf(&log[ATT_SESH_CMD_LEN], "<id>\n");
+    len = sprintf(log, ATT_SESS_CMD);
+    len += sprintf(&log[ATT_SESS_CMD_LEN], "<id>\n");
     print_log(log, len);
 }
 

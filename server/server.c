@@ -202,7 +202,7 @@ void process_msg(client_t **c_list, question_t **q_list, client_t *client,
     } else if (strncmp(rbuf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
         set_question_status(&rbuf[SET_QN_STS_CMD_LEN],
                             rlen - SET_QN_STS_CMD_LEN, client, *q_list);
-    } else if (strncmp(rbuf, GET_SESH_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
+    } else if (strncmp(rbuf, GET_SESS_LS_CMD, GET_SESS_LS_CMD_LEN) == 0) {
         get_sessions_list(client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
@@ -392,7 +392,7 @@ question_t *find_question_by_number(question_t *q_list, int question_num) {
 
 int process_connection(client_t *client, question_t *question, char *tbuf,
                        int *max_fd, fd_set *temp_fd_set) {
-    static int udp_port = 50000;
+    static int udp_port = STARTING_UDP_PORT;
     int tlen;
     setup_udp_connection(client, udp_port);
     if (client->udp_fd >= 0) {
