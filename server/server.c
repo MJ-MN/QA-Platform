@@ -202,6 +202,8 @@ void process_msg(client_t **c_list, question_t **q_list, client_t *client,
     } else if (strncmp(rbuf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
         set_question_status(&rbuf[SET_QN_STS_CMD_LEN],
                             rlen - SET_QN_STS_CMD_LEN, client, *q_list);
+    } else if (strncmp(rbuf, GET_SESH_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
+        get_sessions_list(client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
@@ -323,7 +325,7 @@ void get_questions_list(client_t *client, question_t *q_list) {
     } else {
         tlen = sprintf(tbuf, "List of questions:\n");
         while (q_list != NULL) {
-            send_question(client, q_list, tbuf, &tlen);
+            send_question(client, q_list, tbuf, &tlen, PENDING);
             q_list = q_list->next;
         }
         --tlen;
@@ -331,9 +333,9 @@ void get_questions_list(client_t *client, question_t *q_list) {
     send_buf(tbuf, tlen, client->tcp_fd);
 }
 
-void send_question(client_t *client, question_t *qn,
-                   char *tbuf, int *tlen) {
-    if (qn->status == PENDING) {
+void send_question(client_t *client, question_t *qn, char *tbuf,
+                   int *tlen, question_status qn_status) {
+    if (qn->status == qn_status) {
         if(*tlen + strlen(qn->q_str) < MAX_SIZE_OF_BUF) {
             *tlen += sprintf(&tbuf[*tlen], "Q%d: %s\n", qn->question_num,
                              qn->q_str);
@@ -501,6 +503,24 @@ int process_question_answer(const char *rbuf, int rlen, char *tbuf,
         tlen = sprintf(tbuf, "Question not found!");
     }
     return tlen;
+}
+
+void get_sessions_list(client_t *client, question_t *q_list) {
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_STUDENT) {
+        tlen = sprintf(tbuf, "List of sessions & questions in progress:\n");
+        while (q_list != NULL) {
+            send_question(client, q_list, tbuf, &tlen, ANSWERING);
+            q_list = q_list->next;
+        }
+        --tlen;
+    } else {
+        tlen = sprintf(tbuf, "This command is for students!");
+    }
+    send_buf(tbuf, tlen, client->tcp_fd);
 }
 
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set) {

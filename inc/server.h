@@ -52,8 +52,8 @@ void ask_question(const char *rbuf, int rlen, client_t *client,
 void add_new_question(const char *rbuf, int rlen, client_t *client,
                       question_t **q_list);
 void get_questions_list(client_t *client, question_t *q_list);
-void send_question(client_t *client, question_t *q_list,
-                   char *tbuf, int *tlen);
+void send_question(client_t *client, question_t *q_list, char *tbuf,
+                   int *tlen, question_status qn_status);
 void select_question(const char *rbuf, client_t *client, question_t *q_list,
                      int *max_fd, fd_set *temp_fd_set);
 int process_select_question(client_t *client, question_t *q_list, char *tbuf,
@@ -68,6 +68,7 @@ void set_question_status(const char *rbuf, int rlen, client_t *client,
                          question_t *q_list);
 int process_question_answer(const char *rbuf, int rlen, char *tbuf,
                             client_t *client, question_t *q_list);
+void get_sessions_list(client_t *client, question_t *q_list);
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set);
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
                    question_t **q_list, fd_set *temp_fd_set);

@@ -216,6 +216,8 @@ void process_stdin(char *buf, int rlen, client_t *client,
         } else if (strncmp(buf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
             need_send = set_question_status(&buf[SET_QN_STS_CMD_LEN],
                                             rlen - SET_QN_STS_CMD_LEN, client);
+        } else if (strncmp(buf, GET_SESH_LS_CMD, GET_SESH_LS_CMD_LEN) == 0) {
+            need_send = 1;
         } else {
             char log[MAX_SIZE_OF_LOG];
             int len;
