@@ -23,5 +23,7 @@ int set_role(const char *buf, int rlen);
 int ask_question(int rlen);
 int select_question(const char *buf);
 void send_to_broadcast(const char *buf, int rlen, client_t *client);
+int set_question_status(const char *buf, int rlen, client_t *client);
+int check_question_answer(const char *buf, int rlen);
 
 #endif /* __CLIENT_H */

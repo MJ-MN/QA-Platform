@@ -59,11 +59,15 @@ void select_question(const char *rbuf, client_t *client, question_t *q_list,
 int process_select_question(client_t *client, question_t *q_list, char *tbuf,
                             int q_num, int *max_fd, fd_set *temp_fd_set);
 question_t *find_question_by_number(question_t *q_list, int question_num);
-int process_connection(client_t *client, char *tbuf, int *max_fd,
-                       fd_set *temp_fd_set);
+int process_connection(client_t *client, question_t *question, char *tbuf,
+                       int *max_fd, fd_set *temp_fd_set);
 void setup_udp_connection(client_t *client, int port);
 int create_udp_socket();
 int bind_udp_port(int fd, int port);
+void set_question_status(const char *rbuf, int rlen, client_t *client,
+                         question_t *q_list);
+int process_question_answer(const char *rbuf, int rlen, char *tbuf,
+                            client_t *client, question_t *q_list);
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set);
 void process_stdin(char *buf, int len, int fd, client_t **c_list,
                    question_t **q_list, fd_set *temp_fd_set);

@@ -28,6 +28,17 @@ void disable_echo() {
     tcsetattr(STDIN_FILENO, TCSANOW, &termios_s);
 }
 
+int stoi(const char *str, int *num) {
+    *num = 0;
+    int len = 0;
+    while (*str <= ASCII_9 && *str >= ASCII_0) {
+        *num = *num * 10 + (int)*str - ASCII_0;
+        ++len;
+        ++str;
+    }
+    return len;
+}
+
 void fd_set_init(fd_set *temp_fd_set, int self_fd) {
     FD_ZERO(temp_fd_set);
     FD_SET(STDIN_FILENO, temp_fd_set);

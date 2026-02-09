@@ -28,10 +28,14 @@
 
 #define CONN_STAB "Connection was stablished on port "
 #define CONN_STAB_LEN 34
-#define CONN_CLOSE "Close connection!"
-#define CONN_CLOSE_LEN 17
+#define QN_NUMBER " for question #"
+#define QN_NUMBER_LEN 15
 #define UDP_MODE "udp_mode: "
 #define UDP_MODE_LEN 10
+#define QN_NOT_ANSWERED " not_answered"
+#define QN_NOT_ANSWERED_LEN 13
+#define QN_ANSWERED " answered "
+#define QN_ANSWERED_LEN 10
 
 #define ROLE_NONE '0'
 #define ROLE_STUDENT 'S'
@@ -55,11 +59,13 @@ typedef struct client_t {
     int tcp_fd;
     int udp_fd;
     int retries;
+    int question_num;
     char role;
 } client_t;
 
 void enable_echo();
 void disable_echo();
+int stoi(const char *str, int *num);
 void fd_set_init(fd_set *temp_fd_set, int self_fd);
 void process_stdin_fd(char *buf);
 int receive_buf(char *rbuf, int fd);

@@ -159,6 +159,7 @@ void add_new_client(client_t **c_list, int client_fd) {
     new_client->tcp_fd = client_fd;
     new_client->udp_fd = -1;
     new_client->role = ROLE_NONE;
+    new_client->question_num = -1;
     new_client->next = *c_list;
     *c_list = new_client;
 }
@@ -198,8 +199,9 @@ void process_msg(client_t **c_list, question_t **q_list, client_t *client,
     } else if (strncmp(rbuf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
         select_question(&rbuf[SELECT_QN_CMD_LEN], client,
                         *q_list, max_fd, temp_fd_set);
-    } else if (strncmp(rbuf, CONN_CLOSE, CONN_CLOSE_LEN) == 0) {
-        close_udp_socket(client, temp_fd_set);
+    } else if (strncmp(rbuf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
+        set_question_status(&rbuf[SET_QN_STS_CMD_LEN],
+                            rlen - SET_QN_STS_CMD_LEN, client, *q_list);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
@@ -304,6 +306,7 @@ void add_new_question(const char *rbuf, int rlen, client_t *client,
     question->q_str = malloc(rlen);
     memcpy(question->q_str, rbuf, rlen);
     question->asked_by = client->tcp_fd;
+    question->status = PENDING;
     question->a_str = NULL;
     question->answered_by = -1;
     question->next = *q_list;
@@ -328,17 +331,17 @@ void get_questions_list(client_t *client, question_t *q_list) {
     send_buf(tbuf, tlen, client->tcp_fd);
 }
 
-void send_question(client_t *client, question_t *q_list,
+void send_question(client_t *client, question_t *qn,
                    char *tbuf, int *tlen) {
-    if (q_list->status == PENDING) {
-        if(*tlen + strlen(q_list->q_str) < MAX_SIZE_OF_BUF) {
-            *tlen += sprintf(&tbuf[*tlen], "Q%d: %s\n", q_list->question_num,
-                             q_list->q_str);
+    if (qn->status == PENDING) {
+        if(*tlen + strlen(qn->q_str) < MAX_SIZE_OF_BUF) {
+            *tlen += sprintf(&tbuf[*tlen], "Q%d: %s\n", qn->question_num,
+                             qn->q_str);
         } else {
             --*tlen;
             send_buf(tbuf, *tlen, client->tcp_fd);
-            *tlen = sprintf(tbuf, "Q%d: %s\n", q_list->question_num,
-                            q_list->q_str);
+            *tlen = sprintf(tbuf, "Q%d: %s\n", qn->question_num,
+                            qn->q_str);
         }
     }
 }
@@ -363,7 +366,12 @@ int process_select_question(client_t *client, question_t *q_list, char *tbuf,
     int tlen;
     question_t *question = find_question_by_number(q_list, q_num);
     if (question != NULL) {
-        tlen = process_connection(client, tbuf, max_fd, temp_fd_set);
+        if (question->status == PENDING) {
+            tlen = process_connection(client, question, tbuf, max_fd,
+                                      temp_fd_set);
+        } else {
+            tlen = sprintf(tbuf, "Question is not in pending state!");
+        }
     } else {
         tlen = sprintf(tbuf, "Question not found!");
     }
@@ -380,17 +388,21 @@ question_t *find_question_by_number(question_t *q_list, int question_num) {
     return NULL;
 }
 
-int process_connection(client_t *client, char *tbuf, int *max_fd,
-                       fd_set *temp_fd_set) {
+int process_connection(client_t *client, question_t *question, char *tbuf,
+                       int *max_fd, fd_set *temp_fd_set) {
     static int udp_port = 50000;
     int tlen;
     setup_udp_connection(client, udp_port);
     if (client->udp_fd >= 0) {
+        question->status = ANSWERING;
+        question->answered_by = client->tcp_fd;
         FD_SET(client->udp_fd, temp_fd_set);
         if (client->udp_fd > *max_fd) {
             *max_fd = client->udp_fd;
         }
-        tlen = sprintf(tbuf, "%s%d!", CONN_STAB, udp_port);
+        tlen = sprintf(tbuf, "%s%d%s%d!", CONN_STAB, udp_port,
+                       QN_NUMBER, question->question_num);
+        send_buf(tbuf, tlen, question->asked_by);
         udp_port += 2;
     } else {
         tlen = sprintf(tbuf, "Connection cannot be stablished!");
@@ -444,6 +456,51 @@ int bind_udp_port(int fd, int port) {
         return RET_ERR;
     }
     return RET_OK;
+}
+
+void set_question_status(const char *rbuf, int rlen, client_t *client,
+                         question_t *q_list) {
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen;
+    if (client->role == ROLE_NONE) {
+        tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
+    } else if (client->role == ROLE_STUDENT) {
+        tlen = process_question_answer(rbuf, rlen, tbuf, client, q_list);
+    } else {
+        tlen = sprintf(tbuf, "This command is for students!");
+    }
+    send_buf(tbuf, tlen, client->tcp_fd);
+}
+
+int process_question_answer(const char *rbuf, int rlen, char *tbuf,
+                            client_t *client, question_t *q_list) {
+    int tlen;
+    int q_num_len = stoi(rbuf, &client->question_num);
+    question_t *question = find_question_by_number(q_list,
+                                                   client->question_num);
+    if (question != NULL) {
+        if (strncmp(&rbuf[q_num_len], QN_ANSWERED, QN_ANSWERED_LEN) == 0) {
+            tlen = sprintf(tbuf, "Question status was set to answered!");
+            question->a_str = malloc(rlen - q_num_len - QN_ANSWERED_LEN);
+            memcpy(question->a_str, &rbuf[q_num_len + QN_ANSWERED_LEN],
+                   rlen - QN_ANSWERED_LEN);
+            client->question_num = -1;
+            question->status = ANSWERED;
+        } else if (strncmp(&rbuf[q_num_len], QN_NOT_ANSWERED,
+                           QN_NOT_ANSWERED_LEN) == 0) {
+            tlen = sprintf(tbuf, "Question status was set to pending!");
+            client->question_num = -1;
+            question->status = PENDING;
+            question->answered_by = -1;
+        } else {
+            tlen = sprintf(tbuf, "Invalid status!\n");
+            tlen += sprintf(tbuf, "%s <question_number> <status> <answer>",
+                            SET_QN_STS_CMD);
+        }
+    } else {
+        tlen = sprintf(tbuf, "Question not found!");
+    }
+    return tlen;
 }
 
 void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set) {
