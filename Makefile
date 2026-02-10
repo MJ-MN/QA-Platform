@@ -45,7 +45,7 @@ DEPS        := $(OBJECTS:.o=.d) $(SERVER_OBJ:.o=.d) $(CLIENT_OBJ:.o=.d)
 all: $(SERVER_EXE) $(CLIENT_EXE)
 
 $(SERVER_EXE): $(OBJECTS) $(SERVER_OBJ) | $(BINDIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@ -lrt
 
 $(CLIENT_EXE): $(OBJECTS) $(CLIENT_OBJ) | $(BINDIR)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@

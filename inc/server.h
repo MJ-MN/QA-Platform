@@ -29,14 +29,18 @@ int setup_server(int port);
 int create_tcp_socket();
 void bind_tcp_port(int server_fd, int port);
 void listen_port(int server_fd);
+int config_signal_alarm(fd_set *temp_fd_set);
 void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd,
-                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd);
+                 fd_set *working_fd_set, fd_set *temp_fd_set,
+                 int server_fd, int sig_fd);
 void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set, int server_fd);
+                       int *max_fd, fd_set *temp_fd_set,
+                       int server_fd, int sig_fd);
 void process_server_fd(client_t **c_list, int *max_fd,
                        fd_set *temp_fd_set, int client_fd);
 int accept_client(client_t **c_list, int server_fd);
 void add_new_client(client_t **c_list, int client_fd);
+void process_signal_fd(question_t *q_list, int sig_fd, fd_set *temp_fd_set);
 void process_broadcast_msg(client_t *client);
 void process_client_fd(client_t **c_list, question_t **q_list,
                        client_t *client, int *max_fd, fd_set *temp_fd_set);
@@ -64,6 +68,7 @@ int process_connection(client_t *client, question_t *question, char *tbuf,
 void setup_udp_connection(client_t *client, int port);
 int create_udp_socket();
 int bind_udp_port(int fd, int port);
+void set_alarm(client_t *client);
 void set_question_status(const char *rbuf, int rlen, client_t *client,
                          question_t *q_list);
 int process_question_answer(const char *rbuf, int rlen, char *tbuf,

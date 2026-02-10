@@ -1,10 +1,14 @@
+#define _POSIX_C_SOURCE 200809L
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/signalfd.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "log.h"
@@ -28,7 +32,8 @@ int main(int argc, const char *argv[]) {
     print_log(log, len);
     fd_set working_fd_set, temp_fd_set;
     fd_set_init(&temp_fd_set, server_fd);
-    int max_fd = server_fd;
+    int signal_fd = config_signal_alarm(&temp_fd_set);
+    int max_fd = signal_fd;
     client_t *client_list = NULL;
     question_t *question_list = NULL;
     echo_stdin("", 0);
@@ -36,7 +41,7 @@ int main(int argc, const char *argv[]) {
         working_fd_set = temp_fd_set;
         select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
         monitor_fds(&client_list, &question_list, &max_fd,
-                    &working_fd_set, &temp_fd_set, server_fd);
+                    &working_fd_set, &temp_fd_set, server_fd, signal_fd);
     }
     free_mem(&client_list, &question_list, &temp_fd_set);
     close(server_fd);
@@ -97,23 +102,37 @@ void listen_port(int server_fd) {
     }
 }
 
-void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd, 
-                 fd_set *working_fd_set, fd_set *temp_fd_set, int server_fd) {
+int config_signal_alarm(fd_set *temp_fd_set) {
+    sigset_t sig_set;
+    sigemptyset(&sig_set);
+    sigaddset(&sig_set, SIGALRM);
+    sigprocmask(SIG_BLOCK, &sig_set, NULL);
+    int sig_fd = signalfd(-1, &sig_set, 0);
+    FD_SET(sig_fd, temp_fd_set);
+    return sig_fd;
+}
+
+void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd,
+                 fd_set *working_fd_set, fd_set *temp_fd_set,
+                 int server_fd, int sig_fd) {
     for (int i = 0; i <= *max_fd; ++i) {
         if (FD_ISSET(i, working_fd_set)) {
             process_ready_fds(c_list, q_list, i, max_fd,
-                              temp_fd_set, server_fd);
+                              temp_fd_set, server_fd, sig_fd);
         }
     }
 }
 
 void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set, int server_fd) {
+                       int *max_fd, fd_set *temp_fd_set,
+                       int server_fd, int sig_fd) {
     client_t *client = find_client_by_fd(*c_list, fd);
     if (fd == STDIN_FILENO) {
         process_stdin_fd(term_buf);
     } else if (fd == server_fd) {
         process_server_fd(c_list, max_fd, temp_fd_set, server_fd);
+    } else if (fd == sig_fd) {
+        process_signal_fd(*q_list, sig_fd, temp_fd_set);
     } else if (client->tcp_fd == fd) {
         process_client_fd(c_list, q_list, client, max_fd, temp_fd_set);
     } else {
@@ -162,6 +181,25 @@ void add_new_client(client_t **c_list, int client_fd) {
     new_client->question_num = -1;
     new_client->next = *c_list;
     *c_list = new_client;
+}
+
+void process_signal_fd(question_t *q_list, int sig_fd, fd_set *temp_fd_set) {
+    struct signalfd_siginfo sig_info;
+    read(sig_fd, &sig_info, sizeof(sig_info));
+    if (sig_info.ssi_signo == SIGALRM) {
+        client_t *client = (client_t *)sig_info.ssi_ptr;
+        question_t *question = find_question_by_number(q_list,
+                                                       client->question_num);
+        question->status = PENDING;
+        char tbuf[MAX_SIZE_OF_BUF];
+        int tlen = sprintf(tbuf, CLS_UDP_SOCK);
+        send_udp_buf(tbuf, tlen, client);
+        close_udp_socket(client, temp_fd_set);
+    } else {
+        char log[MAX_SIZE_OF_LOG];
+        int len = sprintf(log, "Unknown signal received!\n");
+        print_log(log, len);
+    }
 }
 
 void process_broadcast_msg(client_t *client) {
@@ -408,6 +446,7 @@ int process_connection(client_t *client, question_t *question, char *tbuf,
                        QN_NUMBER, question->question_num);
         send_buf(tbuf, tlen, question->asked_by);
         udp_port += 2;
+        set_alarm(client);
     } else {
         tlen = sprintf(tbuf, "Connection cannot be stablished!");
     }
@@ -460,6 +499,17 @@ int bind_udp_port(int fd, int port) {
         return RET_ERR;
     }
     return RET_OK;
+}
+
+void set_alarm(client_t *client) {
+    timer_t timer;
+    struct sigevent sig_event = {0};
+    sig_event.sigev_notify = SIGEV_SIGNAL;
+    sig_event.sigev_signo  = SIGALRM;
+    sig_event.sigev_value.sival_ptr = client;
+    timer_create(CLOCK_REALTIME, &sig_event, &timer);
+    struct itimerspec timer_spec = { .it_value.tv_sec = 60 };
+    timer_settime(timer, 0, &timer_spec, NULL);
 }
 
 void set_question_status(const char *rbuf, int rlen, client_t *client,

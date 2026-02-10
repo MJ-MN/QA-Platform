@@ -93,6 +93,9 @@ void process_server_fd(int fd, int *max_fd, fd_set *temp_fd_set,
     int rlen;
     if (client->udp_fd == fd) {
         rlen = receive_udp_buf(rbuf, fd);
+        if (strncmp(rbuf, CLS_UDP_SOCK, CLS_UDP_SOCK_LEN) == 0) {
+            close_udp_socket(client, temp_fd_set);
+        }
     } else {
         rlen = receive_buf(rbuf, fd);
         if (rlen >= 0) {

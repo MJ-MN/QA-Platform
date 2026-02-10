@@ -40,6 +40,8 @@
 #define QN_ANSWERED_LEN 10
 #define SESS_ON_PRG "Session is in progress on port: "
 #define SESS_ON_PRG_LEN 32
+#define CLS_UDP_SOCK "Timeout. Connction closed!"
+#define CLS_UDP_SOCK_LEN 26
 
 #define ROLE_NONE '0'
 #define ROLE_STUDENT 'S'
