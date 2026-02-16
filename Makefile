@@ -42,7 +42,7 @@ all: $(SERVER_EXE) $(CLIENT_EXE)
 # Link server
 $(SERVER_EXE): $(filter $(BUILDDIR)/$(SRCDIR)/% \
                         $(BUILDDIR)/$(SERVERDIR)/%, $(OBJECTS)) | $(BINDIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) $(LDLIBS_SERVER) -o $@
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 # Link client
 $(CLIENT_EXE): $(filter $(BUILDDIR)/$(SRCDIR)/% \
@@ -60,7 +60,7 @@ $(BINDIR):
 clean:
 	$(RM) $(BUILDDIR) $(BINDIR)
 
-debug: CFLAGS += -g O0 -DDEBUG
+debug: CFLAGS += -g -O0 -DDEBUG
 debug: all
 
 release: CFLAGS += -O2 -DNDEBUG
