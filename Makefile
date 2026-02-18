@@ -18,10 +18,10 @@ SERVER_EXE  := $(BINDIR)/$(SERVER_NAME)
 CLIENT_EXE  := $(BINDIR)/$(CLIENT_NAME)
 
 # Flags
-CFLAGS      := -Wall -Wextra
+CFLAGS      := -Wall -Wextra -pthread
 CPPFLAGS    := -I$(INCDIR)
 LDFLAGS     :=
-LDLIBS      := -lrt
+LDLIBS      := -lrt -pthread
 
 # Sources
 COMMON_SRC  := $(shell find $(SRCDIR) -type f -name '*.c')

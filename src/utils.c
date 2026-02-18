@@ -12,22 +12,6 @@
 
 const char *ROLE_STR[] = {"Student", "TA"};
 
-void enable_echo() {
-    struct termios termios_s;
-    tcgetattr(STDIN_FILENO, &termios_s);
-    termios_s.c_lflag |= ICANON;
-    termios_s.c_lflag |= ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &termios_s);
-}
-
-void disable_echo() {
-    struct termios termios_s;
-    tcgetattr(STDIN_FILENO, &termios_s);
-    termios_s.c_lflag &= ~ICANON;
-    termios_s.c_lflag &= ~ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &termios_s);
-}
-
 int stoi(const char *str, int *num) {
     *num = 0;
     int len = 0;
@@ -37,40 +21,6 @@ int stoi(const char *str, int *num) {
         ++str;
     }
     return len;
-}
-
-void fd_set_init(fd_set *temp_fd_set, int self_fd) {
-    FD_ZERO(temp_fd_set);
-    FD_SET(STDIN_FILENO, temp_fd_set);
-    FD_SET(self_fd, temp_fd_set);
-}
-
-void process_stdin_fd(char *buf) {
-    char ch;
-    static int rlen = 0;
-    if (read(STDIN_FILENO, &ch, 1) > 0) {
-        if ((rlen == 0 && (ch == ' ' || ch == '\t' || ch == '\n')) ||
-            (rlen > 0 && buf[rlen - 1] == ' ' && ch == ' ') ||
-            ch == '\t') {
-            /* Do nothing */
-        } else if (ch == '\e') {
-            read(STDIN_FILENO, &ch, 1);
-            read(STDIN_FILENO, &ch, 1);
-        } else if (ch == '\b' || ch == DEL_CHAR) {
-            rlen = (rlen > 0) ? rlen - 1 : 0;
-            buf[rlen] = '\0';
-        } else if (ch == '\n') {
-            if (buf[rlen - 1] == ' ') {
-                --rlen;
-            }
-            buf[rlen++] = ch;
-            buf[rlen] = '\0';
-            rlen = 0;
-        } else {
-            buf[rlen++] = ch;
-            buf[rlen] = '\0';
-        }
-    }
 }
 
 int receive_buf(char *rbuf, int fd) {
@@ -137,24 +87,16 @@ int send_udp_buf(const char *buf, int slen, client_t *client) {
     return tlen;
 }
 
-void echo_stdin(const char *buf, int len) {
-    clear_line();
-    write(STDOUT_FILENO, "<< ", 3);
-    write(STDOUT_FILENO, buf, len);
-}
-
 void clear_line() {
     write(STDOUT_FILENO, "\r\e[K", 4);
 }
 
 void close_endpoint(int status) {
-    enable_echo();
     exit(status);
 }
 
-void close_udp_socket(client_t *client, fd_set *temp_fd_set) {
+void close_udp_socket(client_t *client) {
     if (client->udp_fd >= 0) {
-        FD_CLR(client->udp_fd, temp_fd_set);
         close(client->udp_fd);
         client->udp_fd = -1;
     }

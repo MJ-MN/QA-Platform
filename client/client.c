@@ -1,8 +1,8 @@
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -11,11 +11,12 @@
 #include "client.h"
 
 static char term_buf[MAX_SIZE_OF_BUF] = {0};
+pthread_mutex_t client_udp_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t client_question_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int main(int argc, const char *argv[]) {
     char log[MAX_SIZE_OF_LOG];
     int len;
-    disable_echo();
     if (argc < 2) {
         len = sprintf(log, "Usage: ./bin/client.out <port>\n");
         print_error(log, len); 
@@ -26,20 +27,47 @@ int main(int argc, const char *argv[]) {
     client.udp_fd = -1;
     client.question_num = -1;
     client.tcp_fd = setup_client();
+    pthread_t stdin_thread;
+    pthread_create(&stdin_thread, NULL, process_stdin_fd, &client);
+    pthread_detach(stdin_thread);
     connect_to_server(client.tcp_fd, port);
-    fd_set working_fd_set, temp_fd_set;
-    fd_set_init(&temp_fd_set, client.tcp_fd);
-    int max_fd = client.tcp_fd;
-    echo_stdin("", 0);
+    write(STDOUT_FILENO, "<< ", 3);
+    char rbuf[MAX_SIZE_OF_BUF];
+    int rlen = 0;
     while (1) {
-        working_fd_set = temp_fd_set;
-        select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&max_fd, &working_fd_set, &temp_fd_set, &client);
+        rlen = receive_buf(rbuf, client.tcp_fd);
+        if (rlen == 0) {
+            remove_server(&client);
+            write(STDOUT_FILENO, "<< ", 3);
+            break;
+        } else if (rlen > 0) {
+            process_msg(rbuf, &client);
+            write(STDOUT_FILENO, "<< ", 3);
+        }
     }
-    FD_CLR(client.tcp_fd, &temp_fd_set);
     close(client.tcp_fd);
-    close_udp_socket(&client, &temp_fd_set);
+    close_udp_socket(&client);
     close_endpoint(EXIT_SUCCESS);
+}
+
+void *process_stdin_fd(void *arg) {
+    client_t *client = (client_t *)arg;
+    char ch;
+    int rlen = 0;
+    while (1) {
+        read(STDIN_FILENO, &ch, 1);
+        if (ch == DEL_CHAR) {
+            rlen = (rlen > 0) ? rlen - 1 : 0;
+        } else if (ch == '\n') {
+            term_buf[rlen++] = ch;
+            term_buf[rlen] = '\0';
+            process_stdin(term_buf, rlen, client);
+            rlen = 0;
+        } else {
+            term_buf[rlen++] = ch;
+        }
+    }
+    return NULL;
 }
 
 int setup_client() {
@@ -66,87 +94,58 @@ void connect_to_server(int server_fd, int port) {
     print_success(log, len);
 }
 
-void monitor_fds(int *max_fd, fd_set *working_fd_set, fd_set *temp_fd_set,
-                 client_t *client) {
-    for (int i = 0; i <= *max_fd; ++i) {
-        if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(i, max_fd, temp_fd_set, client);
-        }
-    }
-}
-
-void process_ready_fds(int fd, int *max_fd, fd_set *temp_fd_set,
-                       client_t *client) {
-    if (fd == STDIN_FILENO) {
-        process_stdin_fd(term_buf);
-    } else {
-        process_server_fd(fd, max_fd, temp_fd_set, client);
-    }
-    int len = strlen(term_buf);
-    echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, client, temp_fd_set);
-}
-
-void process_server_fd(int fd, int *max_fd, fd_set *temp_fd_set,
-                       client_t *client) {
+void *process_udp_fd(void *arg) {
+    client_t *client = (client_t *)arg;
     char rbuf[MAX_SIZE_OF_BUF];
-    int rlen;
-    if (client->udp_fd == fd) {
-        rlen = receive_udp_buf(rbuf, fd);
+    while (1) {
+        receive_udp_buf(rbuf, client->udp_fd);
+        write(STDOUT_FILENO, "<< ", 3);
         if (strncmp(rbuf, CLS_UDP_SOCK, CLS_UDP_SOCK_LEN) == 0) {
-            close_udp_socket(client, temp_fd_set);
-        }
-    } else {
-        rlen = receive_buf(rbuf, fd);
-        if (rlen >= 0) {
-            process_msg(rbuf, rlen, fd, max_fd, temp_fd_set, client);
+            break;
         }
     }
+    pthread_mutex_lock(&client_udp_mutex);
+    close_udp_socket(client);
+    pthread_mutex_unlock(&client_udp_mutex);
+    return NULL;
 }
 
-void process_msg(const char *rbuf, int rlen, int server_fd,
-                 int *max_fd, fd_set *temp_fd_set, client_t *client) {
-    if (rlen == 0) {
-        remove_server(server_fd, temp_fd_set, client);
-    } else if (strncmp(rbuf, CONN_STAB, CONN_STAB_LEN) == 0) {
-        if (process_connection(&rbuf[CONN_STAB_LEN], server_fd,
-                               max_fd, temp_fd_set, client)) {
+void process_msg(const char *rbuf, client_t *client) {
+    if (strncmp(rbuf, CONN_STAB, CONN_STAB_LEN) == 0) {
+        if (process_connection(&rbuf[CONN_STAB_LEN], client)) {
+            pthread_mutex_lock(&client_question_mutex);
             client->question_num = atoi(&rbuf[UDP_PORT_LEN + QN_NUMBER_LEN]);
+            pthread_mutex_unlock(&client_question_mutex);
         }
     } else if (strncmp(rbuf, SESS_ON_PRG, SESS_ON_PRG_LEN) == 0) {
-        process_connection(&rbuf[SESS_ON_PRG_LEN], server_fd, max_fd,
-                           temp_fd_set, client);
+        process_connection(&rbuf[SESS_ON_PRG_LEN], client);
     } else {
         /* Do nothing */
     }
 }
 
-void remove_server(int server_fd, fd_set *temp_fd_set, client_t *client) {
+void remove_server(client_t *client) {
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Server connection was closed! fd: %d\n",
-                      server_fd);
+                      client->tcp_fd);
     print_info(log, len);
-    FD_CLR(client->tcp_fd, temp_fd_set);
     close(client->tcp_fd);
-    close_udp_socket(client, temp_fd_set);
+    pthread_mutex_lock(&client_udp_mutex);
+    close_udp_socket(client);
+    pthread_mutex_unlock(&client_udp_mutex);
 }
 
-int process_connection(const char *buf, int server_fd, int *max_fd,
-                       fd_set *temp_fd_set, client_t *client) {
+int process_connection(const char *buf, client_t *client) {
     int ret_val = RET_OK;
     setup_udp_connection(client, atoi(buf));
     if (client->udp_fd >= 0) {
-        FD_SET(client->udp_fd, temp_fd_set);
-        if (client->udp_fd > *max_fd) {
-            *max_fd = client->udp_fd;
-        }
         char log[MAX_SIZE_OF_LOG];
         int len = sprintf(log, "Connection created successfully!\n");
         print_success(log, len);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Connection cannot be stablished!");
-        send_buf(tbuf, tlen, server_fd);
+        send_buf(tbuf, tlen, client->tcp_fd);
         ret_val = RET_ERR;
     }
     return ret_val;
@@ -165,6 +164,9 @@ void setup_udp_connection(client_t *client, int port) {
     client->udp_sock_addr.sin_port = htons(port);
     client->udp_sock_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     client->udp_fd = udp_fd;
+    pthread_t udp_thread;
+    pthread_create(&udp_thread, NULL, process_udp_fd, client);
+    pthread_detach(udp_thread);
 }
 
 int create_udp_socket() {
@@ -200,14 +202,12 @@ int bind_udp_port(int fd, int port) {
     return RET_OK;
 }
 
-void process_stdin(char *buf, int rlen, client_t *client,
-                   fd_set *temp_fd_set) {
+void process_stdin(char *buf, int rlen, client_t *client) {
     int need_send = 0;
-    if (rlen > 1 && buf[rlen - 1] == '\n') {
+    if (rlen > 1) {
         if (strcmp(buf, "exit\n") == 0) {
-            FD_CLR(client->tcp_fd, temp_fd_set);
             close(client->tcp_fd);
-            close_udp_socket(client, temp_fd_set);
+            close_udp_socket(client);
             close_endpoint(EXIT_SUCCESS);
         } else if (strcmp(buf, "help\n") == 0) {
             print_man();
@@ -320,7 +320,10 @@ int select_question(const char *buf) {
 
 void send_to_broadcast(const char *buf, int rlen, client_t *client) {
     if (client->udp_fd >= 0) {
+        pthread_mutex_lock(&client_udp_mutex);
         send_udp_buf(buf, rlen - 1, client);
+        write(STDOUT_FILENO, "<< ", 3);
+        pthread_mutex_unlock(&client_udp_mutex);
     } else {
         char log[MAX_SIZE_OF_LOG];
         int len;
@@ -333,6 +336,7 @@ int set_question_status(const char *buf, int rlen, client_t *client) {
     int ret_val = RET_ERR;
     int qn_number = 0;
     int qn_number_len = stoi(buf, &qn_number);
+    pthread_mutex_lock(&client_question_mutex);
     if (qn_number == client->question_num) {
         ret_val = check_question_answer(&buf[qn_number_len],
                                         rlen - qn_number_len);
@@ -342,6 +346,7 @@ int set_question_status(const char *buf, int rlen, client_t *client) {
         len = sprintf(log, "This question is not selected!\n");
         print_error(log, len);
     }
+    pthread_mutex_unlock(&client_question_mutex);
     return ret_val;
 }
 

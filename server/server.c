@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +9,7 @@
 #include <sys/select.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
-#include <time.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 
 #include "log.h"
@@ -16,11 +17,13 @@
 #include "server.h"
 
 static char term_buf[MAX_SIZE_OF_BUF] = {0};
+pthread_mutex_t client_udp_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t client_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t question_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int main(int argc, const char *argv[]) {
     char log[MAX_SIZE_OF_LOG];
     int len;
-    disable_echo();
     if (argc < 2) {
         len = sprintf(log, "Usage: ./bin/server.out <port>\n");
         print_error(log, len); 
@@ -28,24 +31,46 @@ int main(int argc, const char *argv[]) {
     }
     int port = atoi(argv[1]);
     int server_fd = setup_server(port);
-    len = sprintf(log, "Server is running...\n");
-    print_log(log, len);
-    fd_set working_fd_set, temp_fd_set;
-    fd_set_init(&temp_fd_set, server_fd);
-    int signal_fd = config_signal_alarm(&temp_fd_set);
-    int max_fd = signal_fd;
     client_t *client_list = NULL;
     question_t *question_list = NULL;
-    echo_stdin("", 0);
+    server_struct_t server_struct = {
+        .client_list = &client_list,
+        .client = NULL,
+        .question_list = &question_list,
+        .server_fd = server_fd
+    };
+    pthread_t stdin_thread;
+    pthread_create(&stdin_thread, NULL, process_stdin_fd, &server_struct);
+    pthread_detach(stdin_thread);
+    len = sprintf(log, "Server is running...\n");
+    print_log(log, len);
+    write(STDOUT_FILENO, "<< ", 3);
     while (1) {
-        working_fd_set = temp_fd_set;
-        select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
-        monitor_fds(&client_list, &question_list, &max_fd,
-                    &working_fd_set, &temp_fd_set, server_fd, signal_fd);
+        process_server_fd(&server_struct);
     }
-    free_mem(&client_list, &question_list, &temp_fd_set);
+    free_mem(&server_struct);
     close(server_fd);
     close_endpoint(EXIT_SUCCESS);
+}
+
+void *process_stdin_fd(void *arg) {
+    server_struct_t *server_struct = (server_struct_t *)arg;
+    char ch;
+    int rlen = 0;
+    while (1) {
+        read(STDIN_FILENO, &ch, 1);
+        if (ch == DEL_CHAR) {
+            rlen = (rlen > 0) ? rlen - 1 : 0;
+        } else if (ch == '\n') {
+            rlen = (term_buf[rlen - 1] == ' ') ? rlen - 1 : rlen;
+            term_buf[rlen++] = ch;
+            process_stdin(term_buf, rlen, server_struct);
+            rlen = 0;
+        } else {
+            term_buf[rlen++] = ch;
+        }
+    }
+    return NULL;
 }
 
 int setup_server(int port) {
@@ -102,194 +127,186 @@ void listen_port(int server_fd) {
     }
 }
 
-int config_signal_alarm(fd_set *temp_fd_set) {
-    sigset_t sig_set;
-    sigemptyset(&sig_set);
-    sigaddset(&sig_set, SIGALRM);
-    sigprocmask(SIG_BLOCK, &sig_set, NULL);
-    int sig_fd = signalfd(-1, &sig_set, 0);
-    FD_SET(sig_fd, temp_fd_set);
-    return sig_fd;
+int config_timer(fd_set *wfd_set, int udp_fd) {
+    int timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    struct itimerspec timer_spec = {0};
+    timer_spec.it_value.tv_sec = 60;
+    timerfd_settime(timer_fd, 0, &timer_spec, NULL);
+    FD_ZERO(wfd_set);
+    FD_SET(udp_fd, wfd_set);
+    FD_SET(timer_fd, wfd_set);
+    return timer_fd;
 }
 
-void monitor_fds(client_t **c_list, question_t **q_list, int *max_fd,
-                 fd_set *working_fd_set, fd_set *temp_fd_set,
-                 int server_fd, int sig_fd) {
-    for (int i = 0; i <= *max_fd; ++i) {
-        if (FD_ISSET(i, working_fd_set)) {
-            process_ready_fds(c_list, q_list, i, max_fd,
-                              temp_fd_set, server_fd, sig_fd);
-        }
-    }
+void process_server_fd(server_struct_t *server_struct) {
+    client_t *new_client = accept_client(server_struct);
+    server_struct_t *server_c_struct = malloc(sizeof(server_struct_t));
+    server_c_struct->client_list = server_struct->client_list;
+    server_c_struct->question_list = server_struct->question_list;
+    server_c_struct->client = new_client;
+    pthread_t tid;
+    pthread_create(&tid, NULL, process_client_fd, server_c_struct);
+    pthread_detach(tid);
 }
 
-void process_ready_fds(client_t **c_list, question_t **q_list, int fd,
-                       int *max_fd, fd_set *temp_fd_set,
-                       int server_fd, int sig_fd) {
-    client_t *client = find_client_by_fd(*c_list, fd);
-    if (fd == STDIN_FILENO) {
-        process_stdin_fd(term_buf);
-    } else if (fd == server_fd) {
-        process_server_fd(c_list, max_fd, temp_fd_set, server_fd);
-    } else if (fd == sig_fd) {
-        process_signal_fd(*q_list, sig_fd, temp_fd_set);
-    } else if (client->tcp_fd == fd) {
-        process_client_fd(c_list, q_list, client, max_fd, temp_fd_set);
-    } else {
-        process_broadcast_msg(client);
-    }
-    int len = strlen(term_buf);
-    echo_stdin(term_buf, len);
-    process_stdin(term_buf, len, server_fd, c_list, q_list, temp_fd_set);
-}
-
-void process_server_fd(client_t **c_list, int *max_fd,
-                       fd_set *temp_fd_set, int server_fd) {
-    int new_client_fd = accept_client(c_list, server_fd);
-    FD_SET(new_client_fd, temp_fd_set);
-    if (new_client_fd > *max_fd) {
-        *max_fd = new_client_fd;
-    }
-    char tbuf[MAX_SIZE_OF_BUF];
-    int tlen = sprintf(tbuf, "Which one are you? (S)tudent/(T)A");
-    send_buf(tbuf, tlen, new_client_fd);
-}
-
-int accept_client(client_t **c_list, int server_fd) {
+client_t *accept_client(server_struct_t *server_struct) {
     char log[MAX_SIZE_OF_LOG];
     int len;
     struct sockaddr_in socket_addr;
     socklen_t socket_len = sizeof(struct sockaddr);
-    int client_fd = accept(server_fd, (struct sockaddr *)&socket_addr,
-                           &socket_len);
+    int client_fd = accept(server_struct->server_fd,
+                           (struct sockaddr *)&socket_addr, &socket_len);
     if (client_fd < 0) {
         len = sprintf(log, "Accepting client failed!\n");
         print_error(log, len);
     }
-    add_new_client(c_list, client_fd);
     len = sprintf(log, "New client was connected fd: %d!\n", client_fd);
     print_info(log, len);
-    return client_fd;
+    return add_new_client(server_struct, client_fd);
 }
 
-void add_new_client(client_t **c_list, int client_fd) {
+client_t *add_new_client(server_struct_t *server_struct, int client_fd) {
     client_t *new_client = malloc(sizeof(client_t));
     memset(new_client, 0, sizeof(client_t));
     new_client->tcp_fd = client_fd;
     new_client->udp_fd = -1;
     new_client->role = ROLE_NONE;
     new_client->question_num = -1;
-    new_client->next = *c_list;
-    *c_list = new_client;
+    pthread_mutex_lock(&client_list_mutex);
+    new_client->next = *server_struct->client_list;
+    *server_struct->client_list = new_client;
+    pthread_mutex_unlock(&client_list_mutex);
+    return new_client;
 }
 
-void process_signal_fd(question_t *q_list, int sig_fd, fd_set *temp_fd_set) {
-    struct signalfd_siginfo sig_info;
-    read(sig_fd, &sig_info, sizeof(sig_info));
-    if (sig_info.ssi_signo == SIGALRM) {
-        client_t *client = (client_t *)sig_info.ssi_ptr;
-        question_t *question = find_question_by_number(q_list,
-                                                       client->question_num);
-        question->status = PENDING;
-        char tbuf[MAX_SIZE_OF_BUF];
-        int tlen = sprintf(tbuf, CLS_UDP_SOCK);
-        send_udp_buf(tbuf, tlen, client);
-        close_udp_socket(client, temp_fd_set);
-    } else {
-        char log[MAX_SIZE_OF_LOG];
-        int len = sprintf(log, "Unknown signal received!\n");
-        print_log(log, len);
+void process_timer_fd(server_struct_t *server_c_struct) {
+    question_t *question =
+        find_question_by_number(*server_c_struct->question_list,
+                                server_c_struct->client->question_num);
+    question->status = PENDING;
+    char tbuf[MAX_SIZE_OF_BUF];
+    int tlen = sprintf(tbuf, CLS_UDP_SOCK);
+    send_udp_buf(tbuf, tlen, server_c_struct->client);
+    write(STDOUT_FILENO, "<< ", 3);
+}
+
+void *process_broadcast_msg(void *arg) {
+    server_struct_t *server_c_struct = (server_struct_t *)arg;
+    fd_set working_fd_set, temp_fd_set;
+    int timer_fd = config_timer(&temp_fd_set, server_c_struct->client->udp_fd);
+    int max_fd = timer_fd;
+    while (1) {
+        working_fd_set = temp_fd_set;
+        select(max_fd + 1, &working_fd_set, NULL, NULL, NULL);
+        if (FD_ISSET(timer_fd, &working_fd_set)) {
+            process_timer_fd(server_c_struct);
+            break;
+        }
+        if (FD_ISSET(server_c_struct->client->udp_fd, &working_fd_set)) {
+            char rbuf[MAX_SIZE_OF_BUF];
+            int rlen = receive_udp_buf(rbuf, server_c_struct->client->udp_fd);
+            if (rlen >= 0) {
+                rbuf[rlen] = '\0';
+                send_udp_buf(rbuf, rlen, server_c_struct->client);
+                write(STDOUT_FILENO, "<< ", 3);
+            }
+        }
     }
+    close_udp_socket(server_c_struct->client);
+    return NULL;
 }
 
-void process_broadcast_msg(client_t *client) {
-    char rbuf[MAX_SIZE_OF_BUF];
-    int rlen = receive_udp_buf(rbuf, client->udp_fd);
-    if (rlen >= 0) {
-        rbuf[rlen] = '\0';
-        send_udp_buf(rbuf, rlen, client);
+void *process_client_fd(void *arg) {
+    server_struct_t *server_c_struct = (server_struct_t *)arg;
+    char buf[MAX_SIZE_OF_BUF];
+    int len = sprintf(buf, "Which one are you? (S)tudent/(T)A");
+    send_buf(buf, len, server_c_struct->client->tcp_fd);
+    write(STDOUT_FILENO, "<< ", 3);
+    while (1) {
+        len = receive_buf(buf, server_c_struct->client->tcp_fd);
+        if (len == 0) {
+            remove_client(server_c_struct);
+            write(STDOUT_FILENO, "<< ", 3);
+            break;
+        } else if (len > 0) {
+            buf[len] = '\0';
+            process_msg(server_c_struct, buf, len);
+            write(STDOUT_FILENO, "<< ", 3);
+        }
     }
+    free(server_c_struct);
+    return NULL;
 }
 
-void process_client_fd(client_t **c_list, question_t **q_list,
-                       client_t *client, int *max_fd, fd_set *temp_fd_set) {
-    char rbuf[MAX_SIZE_OF_BUF];
-    int rlen = receive_buf(rbuf, client->tcp_fd);
-    if (rlen >= 0) {
-        rbuf[rlen] = '\0';
-        process_msg(c_list, q_list, client, rbuf,
-                    rlen, max_fd, temp_fd_set);
-    }
-}
-
-void process_msg(client_t **c_list, question_t **q_list, client_t *client,
-                 const char *rbuf, int rlen, int *max_fd,
-                 fd_set *temp_fd_set) {
-    if (rlen == 0) {
-        remove_client(c_list, client, temp_fd_set);
-    } else if (strncmp(rbuf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
-        set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN, client);
+void process_msg(server_struct_t *server_c_struct, const char *rbuf, int rlen) {
+    if (strncmp(rbuf, SET_ROLE_CMD, SET_ROLE_CMD_LEN) == 0) {
+        set_role(&rbuf[SET_ROLE_CMD_LEN], rlen - SET_ROLE_CMD_LEN,
+                 server_c_struct->client);
     } else if (strncmp(rbuf, ASK_QN_CMD, ASK_QN_CMD_LEN) == 0) {
         ask_question(&rbuf[ASK_QN_CMD_LEN], rlen - ASK_QN_CMD_LEN,
-                     client, q_list);
+                     server_c_struct);
     } else if (strncmp(rbuf, GET_QN_LS_CMD, GET_QN_LS_CMD_LEN) == 0) {
-        get_questions_list(client, *q_list);
+        get_questions_list(server_c_struct->client,
+                           *server_c_struct->question_list);
     } else if (strncmp(rbuf, SELECT_QN_CMD, SELECT_QN_CMD_LEN) == 0) {
-        select_question(&rbuf[SELECT_QN_CMD_LEN], client,
-                        *q_list, max_fd, temp_fd_set);
+        select_question(&rbuf[SELECT_QN_CMD_LEN], server_c_struct);
     } else if (strncmp(rbuf, SET_QN_STS_CMD, SET_QN_STS_CMD_LEN) == 0) {
         set_question_status(&rbuf[SET_QN_STS_CMD_LEN],
-                            rlen - SET_QN_STS_CMD_LEN, client, *q_list);
+                            rlen - SET_QN_STS_CMD_LEN, server_c_struct->client,
+                            *server_c_struct->question_list);
     } else if (strncmp(rbuf, GET_SESS_LS_CMD, GET_SESS_LS_CMD_LEN) == 0) {
-        get_sessions_list(client, *q_list);
+        get_sessions_list(server_c_struct->client,
+                          *server_c_struct->question_list);
     } else if (strncmp(rbuf, ATT_SESS_CMD, ATT_SESS_CMD_LEN) == 0) {
-        attend_session(&rbuf[ATT_SESS_CMD_LEN], *c_list, client, *q_list);
+        attend_session(&rbuf[ATT_SESS_CMD_LEN], server_c_struct);
     } else {
         char tbuf[MAX_SIZE_OF_BUF];
         int tlen = sprintf(tbuf, "Invalid command!");
-        send_buf(tbuf, tlen, client->tcp_fd);
+        send_buf(tbuf, tlen, server_c_struct->client->tcp_fd);
     }
 }
 
 client_t *find_client_by_fd(client_t *c_list, int client_fd) {
+    pthread_mutex_lock(&client_list_mutex);
     while (c_list != NULL) {
         if (c_list->tcp_fd == client_fd ||
             c_list->udp_fd == client_fd) {
-            return c_list;
+            break;
         }
         c_list = c_list->next;
     }
-    return NULL;
+    pthread_mutex_unlock(&client_list_mutex);
+    return c_list;
 }
 
-void remove_client(client_t **c_list, client_t *client, fd_set *temp_fd_set) {
-    close(client->tcp_fd);
-    FD_CLR(client->tcp_fd, temp_fd_set);
-    close_udp_socket(client, temp_fd_set);
-    remove_node(c_list, client);
+void remove_client(server_struct_t *server_c_struct) {
+    close(server_c_struct->client->tcp_fd);
+    close_udp_socket(server_c_struct->client);
+    remove_node(server_c_struct);
     char log[MAX_SIZE_OF_LOG];
     int len = sprintf(log, "Client connection was closed fd: %d!\n",
-                      client->tcp_fd);
+                      server_c_struct->client->tcp_fd);
     print_info(log, len);
 }
 
-void remove_node(client_t **list, client_t *client) {
-    client_t *curr_node = *list;
-    if (curr_node == client) {
-        *list = curr_node->next;
-        free(curr_node);
-        return;
-    }
+void remove_node(server_struct_t *server_c_struct) {
+    pthread_mutex_lock(&client_list_mutex);
+    client_t *curr_node = *server_c_struct->client_list;
     client_t *perv = NULL;
     while (curr_node != NULL) {
-        if (curr_node == client) {
-            perv->next = curr_node->next;
+        if (curr_node == server_c_struct->client) {
+            if (perv == NULL) {
+                *server_c_struct->client_list = curr_node->next;
+            } else {
+                perv->next = curr_node->next;
+            }
             free(curr_node);
-            return;
+            break;
         }
         perv = curr_node;
         curr_node = curr_node->next;
     }
+    pthread_mutex_unlock(&client_list_mutex);
 }
 
 void set_role(const char *rbuf, int rlen, client_t *client) {
@@ -325,34 +342,36 @@ void assign_role(char role, client_t *client) {
     }
 }
 
-void ask_question(const char *rbuf, int rlen, client_t *client,
-                  question_t **q_list) {
+void ask_question(const char *rbuf, int rlen,
+                  server_struct_t *server_c_struct) {
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen;
-    if (client->role == ROLE_NONE) {
+    if (server_c_struct->client->role == ROLE_NONE) {
         tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
-    } else if (client->role == ROLE_TA) {
+    } else if (server_c_struct->client->role == ROLE_TA) {
         tlen = sprintf(tbuf, "This command is for students!");
     } else {
-        add_new_question(rbuf, rlen, client, q_list);
+        add_new_question(rbuf, rlen, server_c_struct);
         tlen = sprintf(tbuf, "Question registered!");
     }
-    send_buf(tbuf, tlen, client->tcp_fd);
+    send_buf(tbuf, tlen, server_c_struct->client->tcp_fd);
 }
 
-void add_new_question(const char *rbuf, int rlen, client_t *client,
-                      question_t **q_list) {
+void add_new_question(const char *rbuf, int rlen,
+                      server_struct_t *server_c_struct) {
     static int question_num = 0;
     question_t *question = malloc(sizeof(question_t));
     question->question_num = question_num++;
     question->q_str = malloc(rlen);
     memcpy(question->q_str, rbuf, rlen);
-    question->asked_by = client->tcp_fd;
+    question->asked_by = server_c_struct->client->tcp_fd;
     question->status = PENDING;
     question->a_str = NULL;
     question->answered_by = -1;
-    question->next = *q_list;
-    *q_list = question;
+    pthread_mutex_lock(&question_list_mutex);
+    question->next = *server_c_struct->question_list;
+    *server_c_struct->question_list = question;
+    pthread_mutex_unlock(&question_list_mutex);
 }
 
 void get_questions_list(client_t *client, question_t *q_list) {
@@ -366,7 +385,9 @@ void get_questions_list(client_t *client, question_t *q_list) {
         tlen = sprintf(tbuf, "List of questions:\n");
         while (q_list != NULL) {
             send_question(client, q_list, tbuf, &tlen, PENDING);
+            pthread_mutex_lock(&question_list_mutex);
             q_list = q_list->next;
+            pthread_mutex_unlock(&question_list_mutex);
         }
         --tlen;
     }
@@ -388,29 +409,27 @@ void send_question(client_t *client, question_t *qn, char *tbuf,
     }
 }
 
-void select_question(const char *rbuf, client_t *client, question_t *q_list,
-                     int *max_fd, fd_set *temp_fd_set) {
+void select_question(const char *rbuf, server_struct_t *server_c_struct) {
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen;
-    if (client->role == ROLE_NONE) {
+    if (server_c_struct->client->role == ROLE_NONE) {
         tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
-    } else if (client->role == ROLE_STUDENT) {
+    } else if (server_c_struct->client->role == ROLE_STUDENT) {
         tlen = sprintf(tbuf, "This command is for TAs!");
     } else {
-        tlen = process_select_question(client, q_list, tbuf, atoi(rbuf),
-                                       max_fd, temp_fd_set);
+        tlen = process_select_question(server_c_struct, tbuf, atoi(rbuf));
     }
-    send_buf(tbuf, tlen, client->tcp_fd);
+    send_buf(tbuf, tlen, server_c_struct->client->tcp_fd);
 }
 
-int process_select_question(client_t *client, question_t *q_list, char *tbuf,
-                            int q_num, int *max_fd, fd_set *temp_fd_set) {
+int process_select_question(server_struct_t *server_c_struct,
+                            char *tbuf, int q_num) {
     int tlen;
-    question_t *question = find_question_by_number(q_list, q_num);
+    question_t *question =
+        find_question_by_number(*server_c_struct->question_list, q_num);
     if (question != NULL) {
         if (question->status == PENDING) {
-            tlen = process_connection(client, question, tbuf, max_fd,
-                                      temp_fd_set);
+            tlen = process_connection(server_c_struct, question, tbuf);
         } else {
             tlen = sprintf(tbuf, "Question is not in pending state!");
         }
@@ -421,32 +440,33 @@ int process_select_question(client_t *client, question_t *q_list, char *tbuf,
 }
 
 question_t *find_question_by_number(question_t *q_list, int question_num) {
+    pthread_mutex_lock(&question_list_mutex);
     while (q_list != NULL) {
         if (q_list->question_num == question_num) {
-            return q_list;
+            break;
         }
         q_list = q_list->next;
     }
-    return NULL;
+    pthread_mutex_unlock(&question_list_mutex);
+    return q_list;
 }
 
-int process_connection(client_t *client, question_t *question, char *tbuf,
-                       int *max_fd, fd_set *temp_fd_set) {
+int process_connection(server_struct_t *server_c_struct, question_t *question,
+                       char *tbuf) {
     static int udp_port = STARTING_UDP_PORT;
     int tlen;
-    setup_udp_connection(client, udp_port);
-    if (client->udp_fd >= 0) {
+    setup_udp_connection(server_c_struct->client, udp_port);
+    if (server_c_struct->client->udp_fd >= 0) {
         question->status = ANSWERING;
-        question->answered_by = client->tcp_fd;
-        FD_SET(client->udp_fd, temp_fd_set);
-        if (client->udp_fd > *max_fd) {
-            *max_fd = client->udp_fd;
-        }
+        question->answered_by = server_c_struct->client->tcp_fd;
+        server_c_struct->client->question_num = question->question_num;
+        pthread_t tid;
+        pthread_create(&tid, NULL, process_broadcast_msg, server_c_struct);
+        pthread_detach(tid);
         tlen = sprintf(tbuf, "%s%d%s%d!", CONN_STAB, udp_port,
                        QN_NUMBER, question->question_num);
         send_buf(tbuf, tlen, question->asked_by);
         udp_port += 2;
-        set_alarm(client);
     } else {
         tlen = sprintf(tbuf, "Connection cannot be stablished!");
     }
@@ -499,17 +519,6 @@ int bind_udp_port(int fd, int port) {
         return RET_ERR;
     }
     return RET_OK;
-}
-
-void set_alarm(client_t *client) {
-    timer_t timer;
-    struct sigevent sig_event = {0};
-    sig_event.sigev_notify = SIGEV_SIGNAL;
-    sig_event.sigev_signo  = SIGALRM;
-    sig_event.sigev_value.sival_ptr = client;
-    timer_create(CLOCK_REALTIME, &sig_event, &timer);
-    struct itimerspec timer_spec = { .it_value.tv_sec = 60 };
-    timer_settime(timer, 0, &timer_spec, NULL);
 }
 
 void set_question_status(const char *rbuf, int rlen, client_t *client,
@@ -566,7 +575,9 @@ void get_sessions_list(client_t *client, question_t *q_list) {
         tlen = sprintf(tbuf, "List of sessions & questions in progress:\n");
         while (q_list != NULL) {
             send_question(client, q_list, tbuf, &tlen, ANSWERING);
+            pthread_mutex_lock(&question_list_mutex);
             q_list = q_list->next;
+            pthread_mutex_unlock(&question_list_mutex);
         }
         --tlen;
     } else {
@@ -575,19 +586,20 @@ void get_sessions_list(client_t *client, question_t *q_list) {
     send_buf(tbuf, tlen, client->tcp_fd);
 }
 
-void attend_session(const char *rbuf, client_t *c_list,
-                    client_t *client, question_t *q_list) {
+void attend_session(const char *rbuf, server_struct_t *server_c_struct) {
     char tbuf[MAX_SIZE_OF_BUF];
     int tlen;
-    if (client->role == ROLE_NONE) {
+    if (server_c_struct->client->role == ROLE_NONE) {
         tlen = sprintf(tbuf, "First, set your role!\nUsage: set_role <role>");
-    } else if (client->role == ROLE_STUDENT) {
-        question_t *question = find_question_by_number(q_list, atoi(rbuf));
-        tlen = process_attend_session(c_list, question, tbuf);
+    } else if (server_c_struct->client->role == ROLE_STUDENT) {
+        question_t *question =
+            find_question_by_number(*server_c_struct->question_list,
+                                    atoi(rbuf));
+        tlen = process_attend_session(*server_c_struct->client_list, question, tbuf);
     } else {
         tlen = sprintf(tbuf, "This command is for students!");
     }
-    send_buf(tbuf, tlen, client->tcp_fd);
+    send_buf(tbuf, tlen, server_c_struct->client->tcp_fd);
 }
 
 int process_attend_session(client_t *c_list, question_t *question,
@@ -603,36 +615,37 @@ int process_attend_session(client_t *c_list, question_t *question,
     return tlen;
 }
 
-void free_mem(client_t **c_list, question_t **q_list, fd_set *temp_fd_set) {
+void free_mem(server_struct_t *server_struct) {
     client_t *c_next = NULL;
-    while (*c_list != NULL) {
-        c_next = (*c_list)->next;
-        FD_CLR((*c_list)->tcp_fd, temp_fd_set);
-        close((*c_list)->tcp_fd);
-        close_udp_socket(*c_list, temp_fd_set);
-        free(*c_list);
-        *c_list = c_next;
+    pthread_mutex_lock(&client_list_mutex);
+    while (*server_struct->client_list != NULL) {
+        c_next = (*server_struct->client_list)->next;
+        close((*server_struct->client_list)->tcp_fd);
+        close_udp_socket(*server_struct->client_list);
+        free(*server_struct->client_list);
+        *server_struct->client_list = c_next;
     }
+    pthread_mutex_unlock(&client_list_mutex);
     question_t *q_next = NULL;
-    while (*q_list != NULL) {
-        q_next = (*q_list)->next;
-        if ((*q_list)->a_str != NULL) {
-            free((*q_list)->a_str);
+    pthread_mutex_lock(&question_list_mutex);
+    while (*server_struct->question_list != NULL) {
+        q_next = (*server_struct->question_list)->next;
+        if ((*server_struct->question_list)->a_str != NULL) {
+            free((*server_struct->question_list)->a_str);
         }
-        if ((*q_list)->q_str != NULL) {
-            free((*q_list)->q_str);
+        if ((*server_struct->question_list)->q_str != NULL) {
+            free((*server_struct->question_list)->q_str);
         }
-        free(*q_list);
-        *q_list = q_next;
+        free(*server_struct->question_list);
+        *server_struct->question_list = q_next;
     }
+    pthread_mutex_unlock(&question_list_mutex);
 }
 
-void process_stdin(char *buf, int len, int fd, client_t **c_list,
-                   question_t **q_list, fd_set *temp_fd_set) {
+void process_stdin(char *buf, int len, server_struct_t *server_struct) {
     if (strcmp(buf, "exit\n") == 0) {
-        free_mem(c_list, q_list, temp_fd_set);
-        FD_CLR(fd, temp_fd_set);
-        close(fd);
+        free_mem(server_struct);
+        close(server_struct->server_fd);
         close_endpoint(EXIT_SUCCESS);
     } else if (len > 0 && buf[len - 1] == '\n') {
         write(STDOUT_FILENO, "<< ", 3);
