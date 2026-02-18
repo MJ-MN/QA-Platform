@@ -1,5 +1,5 @@
 # Q&A Platform
-Q&A Platform is a question and answer platform for students and teaching assistants based on CLI using Socket Programming and developed by C.
+Q&A Platform is a question and answer platform for students and teaching assistants based on CLI using Socket Programming and developed by C. This program is implemented in both **sequential** (using select() system call), and **parallel** (using pthread) versions. Checkout to **multithread** branch for parallel version.
 ![screenshot](./Q&A.png?raw=true)
 ## Tutorial
 ### Building
